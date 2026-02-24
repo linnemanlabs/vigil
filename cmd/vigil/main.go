@@ -33,6 +33,8 @@ import (
 
 	"github.com/linnemanlabs/vigil/internal/alertapi"
 	vc "github.com/linnemanlabs/vigil/internal/cfg"
+	"github.com/linnemanlabs/vigil/internal/llm/claude"
+	"github.com/linnemanlabs/vigil/internal/tools"
 	"github.com/linnemanlabs/vigil/internal/triage"
 )
 
@@ -187,6 +189,28 @@ func run() error {
 	m.SetBuildInfoFromVersion(v.AppName, "server", &vi)
 	m.SetProfilingActive(profErr == nil && profCfg.EnablePyroscope)
 
+	// Initialize the tool registry and register available tools
+	registry := tools.NewRegistry()
+	if appCfg.PrometheusEndpoint != "" {
+		registry.Register(tools.NewPrometheusQuery(appCfg.PrometheusEndpoint))
+	}
+
+	// Initialize the triage store, which will hold triage results in memory for now.
+	store := triage.NewStore()
+
+	// Initialize Claude provider. This will be used by the triage
+	// engine to send requests to the LLM with tool information.
+	claudeProvider := claude.New(appCfg.ClaudeAPIKey, appCfg.ClaudeModel)
+	if claudeProvider == nil {
+		return fmt.Errorf("failed to initialize Claude provider")
+	}
+
+	// Initialize the triage engine, which will run the LLM and execute tools during triage.
+	claudeEngine := triage.NewEngine(claudeProvider, registry, store, L)
+	if claudeEngine == nil {
+		return fmt.Errorf("failed to initialize triage engine for Claude provider")
+	}
+
 	// setup toggle for server shutdown. this is used to fail readiness checks
 	// during shutdown to drain connections from load balancer before killing the process.
 	var shutdownGate health.ShutdownGate
@@ -205,9 +229,6 @@ func run() error {
 	opsOpts.Readiness = readiness
 	opsOpts.UseRecoverMW = true
 	opsOpts.OnPanic = m.IncHttpPanic
-
-	// Initialize the triage store, which will hold triage results in memory for now
-	store := triage.NewStore()
 
 	// start admin/ops listener. sg restricts inbound to internal monitoring infrastructure.
 	// we reject connections from public ips and requests with x-forwarded set in middleware
@@ -244,7 +265,7 @@ func run() error {
 	r.Get("/-/ready", health.ReadyzHandler(readiness))
 
 	// register api routes
-	alertapiHTTP := alertapi.New(L, store)
+	alertapiHTTP := alertapi.New(L, store, claudeEngine)
 	alertapiHTTP.RegisterRoutes(r)
 
 	// middleware stack for main listener, order matters these are wrappers, outermost sees raw request

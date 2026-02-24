@@ -2,6 +2,7 @@ package alertapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -54,7 +55,7 @@ func (a *API) handleIngestAlert(w http.ResponseWriter, r *http.Request) {
 		accepted = append(accepted, id)
 
 		// kick off async triage
-		go a.triage(r.Context(), result, &al)
+		go a.engine.Run(context.Background(), result, &al)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
