@@ -1,4 +1,4 @@
-package api
+package alertapi
 
 import (
 	"net/http"
@@ -7,6 +7,7 @@ import (
 	"github.com/linnemanlabs/go-core/log"
 )
 
+// API holds dependencies for HTTP handlers.
 type API struct {
 	logger log.Logger
 	// triage service
@@ -32,10 +33,10 @@ func (a *API) RegisterRoutes(r chi.Router) {
 	})
 }
 
-func (a *API) handleIngestAlert(w http.ResponseWriter, r *http.Request) {
+func (a *API) handleIngestAlert(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (a *API) handleGetTriage(w http.ResponseWriter, r *http.Request) {
+func (a *API) handleGetTriage(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }

@@ -1,0 +1,67 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+linters:
+  enable:
+    - gosec
+    - errcheck
+    - exhaustive
+    - govet
+    - staticcheck
+    - unused
+    - gocritic
+    - gocognit
+    - prealloc
+    - unconvert
+    - unparam
+    - misspell
+    - revive
+    - bodyclose
+    - noctx
+    - errorlint
+    - nilerr
+    - goconst
+    - thelper
+    - usestdlibvars
+    - reassign
+    - govet
+    - ineffassign
+    - dupl
+    - copyloopvar
+    - nolintlint
+    - copyloopvar
+    - ineffassign
+    - dupl
+    - nolintlint
+    - spancheck
+    - sloglint
+    - fatcontext
+    - promlinter
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - gocognit
+
+  settings:
+    gosec:
+      excludes: []
+    gocognit:
+      min-complexity: 30
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,3 +1,4 @@
+// Vigil is an AI-powered infrastructure alert analysis and triage tool.
 package main
 
 import (
@@ -30,7 +31,7 @@ import (
 	"github.com/linnemanlabs/go-core/otelx"
 	v "github.com/linnemanlabs/go-core/version"
 
-	"github.com/linnemanlabs/vigil/internal/api"
+	"github.com/linnemanlabs/vigil/internal/alertapi"
 	vc "github.com/linnemanlabs/vigil/internal/cfg"
 )
 
@@ -44,7 +45,7 @@ func main() {
 	}
 }
 
-func run() error { //nolint:gocognit // run wires everything together, splitting it would obscure startup sequence
+func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -62,8 +63,7 @@ func run() error { //nolint:gocognit // run wires everything together, splitting
 		logCfg    log.Config
 		opsCfg    opshttp.Config
 		profCfg   prof.Config
-		//ratelimitCfg ratelimit.Config
-		traceCfg otelx.Config
+		traceCfg  otelx.Config
 	)
 
 	// register flags for each package, which will be parsed into the shared config struct
@@ -72,7 +72,6 @@ func run() error { //nolint:gocognit // run wires everything together, splitting
 	logCfg.RegisterFlags(flag.CommandLine)
 	opsCfg.RegisterFlags(flag.CommandLine)
 	profCfg.RegisterFlags(flag.CommandLine)
-	//ratelimitCfg.RegisterFlags(flag.CommandLine)
 	traceCfg.RegisterFlags(flag.CommandLine)
 	var showVersion bool
 	flag.BoolVar(&showVersion, "V", false, "Print version+build information and exit")
@@ -100,7 +99,6 @@ func run() error { //nolint:gocognit // run wires everything together, splitting
 		logCfg.Validate(),
 		opsCfg.Validate(),
 		profCfg.Validate(),
-		//ratelimit.Validate(),
 		traceCfg.Validate(),
 	); err != nil {
 		return fmt.Errorf("configuration validation failed: %w", err)
@@ -117,7 +115,7 @@ func run() error { //nolint:gocognit // run wires everything together, splitting
 		return fmt.Errorf("logger init: %w", err)
 	}
 	// no-op for slog/stderr, but here if we swap backends in the future to ensure any buffered logs are flushed on shutdown
-	defer lg.Sync()
+	defer func() { _ = lg.Sync() }()
 
 	// create a logger with component field pre-filled for structured logging in this package
 	L := lg.With("component", vi.Component)
@@ -180,7 +178,7 @@ func run() error { //nolint:gocognit // run wires everything together, splitting
 		L.Error(ctx, err, "otel init failed")
 	}
 	if shutdownOtelx != nil {
-		defer shutdownOtelx(context.Background())
+		defer func() { _ = shutdownOtelx(context.Background()) }()
 	}
 
 	// Setup metrics, we use our own metrics package for internal instrumentation
@@ -215,7 +213,12 @@ func run() error { //nolint:gocognit // run wires everything together, splitting
 		L.Error(ctx, err, "failed to start ops http listener")
 		return err
 	}
-	defer opsHTTPStop(context.Background())
+	defer func() {
+		err := opsHTTPStop(context.Background())
+		if err != nil {
+			L.Error(ctx, err, "failed to stop ops http listener")
+		}
+	}()
 
 	// setup main api chi router and middleware stack
 	r := chi.NewRouter()
@@ -237,8 +240,8 @@ func run() error { //nolint:gocognit // run wires everything together, splitting
 	r.Get("/-/ready", health.ReadyzHandler(readiness))
 
 	// register api routes
-	api := api.New(L)
-	api.RegisterRoutes(r)
+	alertapiHTTP := alertapi.New(L)
+	alertapiHTTP.RegisterRoutes(r)
 
 	// middleware stack for main listener, order matters these are wrappers, outermost sees raw request
 	// first and is last to see response, innermost is last to see request and first to see response but
@@ -262,7 +265,7 @@ func run() error { //nolint:gocognit // run wires everything together, splitting
 			return r.Method + " " + r.URL.Path
 		}),
 		// WithPublicEndpointFn is the replacement for WithPublicEndpoint()
-		otelhttp.WithPublicEndpointFn(func(r *http.Request) bool { return true }),
+		otelhttp.WithPublicEndpointFn(func(_ *http.Request) bool { return true }),
 	)
 
 	// Metrics middleware for prometheus instrumentation
@@ -284,13 +287,18 @@ func run() error { //nolint:gocognit // run wires everything together, splitting
 	// Security headers outermost to ensure they are served on every response
 	h = httpmw.SecurityHeaders(h)
 
-	// Start main HTTP server with middleware and handlers
-	apiHTTPStop, err := httpserver.Start(ctx, fmt.Sprintf(":%d", appCfg.APIPort), h, L)
+	// Start alertapi HTTP server with middleware and handlers
+	alertapiHTTPStop, err := httpserver.Start(ctx, fmt.Sprintf(":%d", appCfg.APIPort), h, L)
 	if err != nil {
-		L.Error(ctx, err, "failed to start api http listener")
+		L.Error(ctx, err, "failed to start alertapi http listener")
 		return err
 	}
-	defer apiHTTPStop(context.Background())
+	defer func() {
+		err := alertapiHTTPStop(context.Background())
+		if err != nil {
+			L.Error(ctx, err, "failed to stop alertapi http listener")
+		}
+	}()
 
 	// Notify systemd that we started successfully if started under systemd
 	if err := notifySystemd(); err != nil {
@@ -328,7 +336,7 @@ func run() error { //nolint:gocognit // run wires everything together, splitting
 		fn   func(context.Context) error
 	}
 	stopFns := []stopFn{
-		{"app http server", apiHTTPStop},
+		{"alertapi http server", alertapiHTTPStop},
 		{"ops http server", opsHTTPStop},
 		{"otel", shutdownOtelx},
 	}
@@ -362,7 +370,7 @@ func notifySystemd() error {
 	if err != nil {
 		return fmt.Errorf("systemd notify failed: dial failed: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if _, err := conn.Write([]byte("READY=1")); err != nil {
 		return fmt.Errorf("systemd notify failed: write failed: %w", err)
 	}

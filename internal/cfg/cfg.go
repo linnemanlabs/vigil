@@ -22,6 +22,8 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.IntVar(&c.APIPort, "http-port", 8080, "API listen TCP port (1..65535)")
 }
 
+// Validate checks all configuration fields for correctness.
+// It returns an error if any field is invalid, or nil if all fields are valid.
 func (c *Config) Validate() error {
 	var errs []error
 
