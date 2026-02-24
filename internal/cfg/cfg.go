@@ -12,6 +12,9 @@ type Config struct {
 	DrainSeconds          int
 	ShutdownBudgetSeconds int
 	APIPort               int
+	PrometheusEndpoint    string
+	ClaudeAPIKey          string
+	ClaudeModel           string
 }
 
 // RegisterFlags binds Config fields to the given FlagSet with defaults inline
@@ -19,6 +22,9 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.IntVar(&c.DrainSeconds, "drain-seconds", 60, "seconds to wait for in-flight requests to drain before shutdown (1..300)")
 	fs.IntVar(&c.ShutdownBudgetSeconds, "shutdown-budget-seconds", 90, "total seconds for component shutdown after drain (1..300)")
 	fs.IntVar(&c.APIPort, "http-port", 8080, "API listen TCP port (1..65535)")
+	fs.StringVar(&c.PrometheusEndpoint, "prometheus-endpoint", "", "Prometheus endpoint for metrics collection by tool use")
+	fs.StringVar(&c.ClaudeAPIKey, "claude-api-key", "", "API key for accessing the Claude LLM provider")
+	fs.StringVar(&c.ClaudeModel, "claude-model", "claude-sonnet-4-20250514", "Claude model to use)")
 }
 
 // Validate checks all configuration fields for correctness.
@@ -42,6 +48,21 @@ func (c *Config) Validate() error {
 	// API port must be valid TCP port number
 	if c.APIPort <= 0 || c.APIPort > 65535 {
 		errs = append(errs, fmt.Errorf("invalid HTTP_PORT %d (must be 1..65535)", c.APIPort))
+	}
+
+	// Prometheus endpoint is required for metrics collection by tools
+	if c.PrometheusEndpoint == "" {
+		errs = append(errs, errors.New("PROMETHEUS_ENDPOINT is required"))
+	}
+
+	// Claude API key is required for LLM access
+	if c.ClaudeAPIKey == "" {
+		errs = append(errs, errors.New("CLAUDE_API_KEY is required"))
+	}
+
+	// Claude model is required for LLM access
+	if c.ClaudeModel == "" {
+		errs = append(errs, errors.New("CLAUDE_MODEL is required"))
 	}
 
 	if len(errs) > 0 {
