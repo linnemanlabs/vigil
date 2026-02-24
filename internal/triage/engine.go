@@ -180,7 +180,7 @@ func (e *Engine) Run(ctx context.Context, result *Result, al *alert.Alert) {
 }
 
 // buildSystemPrompt constructs the system prompt for the LLM, providing instructions on how to analyze the alert and use tools effectively.
-func buildSystemPrompt(al *alert.Alert) string {
+func buildSystemPrompt(_ *alert.Alert) string {
 	return `You are Vigil, an infrastructure triage AI. You analyze alerts and diagnose root causes.
 
 You have access to tools that let you query metrics, read logs, and inspect infrastructure.
