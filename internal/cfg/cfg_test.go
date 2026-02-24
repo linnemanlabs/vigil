@@ -27,10 +27,6 @@ func TestRegisterFlags_Defaults(t *testing.T) {
 	if c.APIPort != 8080 {
 		t.Errorf("APIPort = %d, want 8080", c.APIPort)
 	}
-	// EvidenceSigningKeyARN is not registered as a flag; must stay zero-value.
-	if c.EvidenceSigningKeyARN != "" {
-		t.Errorf("EvidenceSigningKeyARN = %q, want empty", c.EvidenceSigningKeyARN)
-	}
 }
 
 func TestRegisterFlags_Override(t *testing.T) {

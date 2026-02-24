@@ -11,7 +11,6 @@ import (
 type Config struct {
 	DrainSeconds          int
 	ShutdownBudgetSeconds int
-	EvidenceSigningKeyARN string
 	APIPort               int
 }
 
