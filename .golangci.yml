@@ -46,16 +46,13 @@ linters:
     - promlinter
   exclusions:
     rules:
-      - path: _test\.go
-        linters:
-          - gosec
-          - gocognit
+
 
   settings:
     gosec:
       excludes: []
     gocognit:
-      min-complexity: 30
+      min-complexity: 25
     gocritic:
       enabled-tags:
         - diagnostic
