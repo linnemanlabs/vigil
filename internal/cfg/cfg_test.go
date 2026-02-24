@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+// validBase returns a Config with all required fields set to valid values.
+func validBase() Config {
+	return Config{
+		DrainSeconds:          60,
+		ShutdownBudgetSeconds: 90,
+		APIPort:               8080,
+		PrometheusEndpoint:    "http://localhost:9090",
+		ClaudeAPIKey:          "sk-test-key",
+		ClaudeModel:           "claude-sonnet-4-20250514",
+	}
+}
+
 func TestRegisterFlags_Defaults(t *testing.T) {
 	t.Parallel()
 
@@ -27,6 +39,9 @@ func TestRegisterFlags_Defaults(t *testing.T) {
 	if c.APIPort != 8080 {
 		t.Errorf("APIPort = %d, want 8080", c.APIPort)
 	}
+	if c.ClaudeModel != "claude-sonnet-4-20250514" {
+		t.Errorf("ClaudeModel = %q, want %q", c.ClaudeModel, "claude-sonnet-4-20250514")
+	}
 }
 
 func TestRegisterFlags_Override(t *testing.T) {
@@ -36,7 +51,14 @@ func TestRegisterFlags_Override(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	c.RegisterFlags(fs)
 
-	args := []string{"-drain-seconds", "30", "-shutdown-budget-seconds", "120", "-http-port", "9090"}
+	args := []string{
+		"-drain-seconds", "30",
+		"-shutdown-budget-seconds", "120",
+		"-http-port", "9090",
+		"-prometheus-endpoint", "http://prom:9090",
+		"-claude-api-key", "sk-override",
+		"-claude-model", "claude-opus-4-20250514",
+	}
 	if err := fs.Parse(args); err != nil {
 		t.Fatalf("parse args: %v", err)
 	}
@@ -49,6 +71,15 @@ func TestRegisterFlags_Override(t *testing.T) {
 	}
 	if c.APIPort != 9090 {
 		t.Errorf("APIPort = %d, want 9090", c.APIPort)
+	}
+	if c.PrometheusEndpoint != "http://prom:9090" {
+		t.Errorf("PrometheusEndpoint = %q, want %q", c.PrometheusEndpoint, "http://prom:9090")
+	}
+	if c.ClaudeAPIKey != "sk-override" {
+		t.Errorf("ClaudeAPIKey = %q, want %q", c.ClaudeAPIKey, "sk-override")
+	}
+	if c.ClaudeModel != "claude-opus-4-20250514" {
+		t.Errorf("ClaudeModel = %q, want %q", c.ClaudeModel, "claude-opus-4-20250514")
 	}
 }
 
@@ -63,17 +94,23 @@ func TestValidate(t *testing.T) {
 	}{
 		{
 			name:    "defaults are valid",
-			cfg:     Config{DrainSeconds: 60, ShutdownBudgetSeconds: 90, APIPort: 8080},
+			cfg:     validBase(),
 			wantErr: false,
 		},
 		{
-			name:    "minimum valid values",
-			cfg:     Config{DrainSeconds: 1, ShutdownBudgetSeconds: 2, APIPort: 1},
+			name: "minimum valid values",
+			cfg: Config{
+				DrainSeconds: 1, ShutdownBudgetSeconds: 2, APIPort: 1,
+				PrometheusEndpoint: "http://p", ClaudeAPIKey: "k", ClaudeModel: "m",
+			},
 			wantErr: false,
 		},
 		{
-			name:    "maximum valid values",
-			cfg:     Config{DrainSeconds: 299, ShutdownBudgetSeconds: 300, APIPort: 65535},
+			name: "maximum valid values",
+			cfg: Config{
+				DrainSeconds: 299, ShutdownBudgetSeconds: 300, APIPort: 65535,
+				PrometheusEndpoint: "http://p", ClaudeAPIKey: "k", ClaudeModel: "m",
+			},
 			wantErr: false,
 		},
 		// DrainSeconds boundaries
@@ -96,8 +133,11 @@ func TestValidate(t *testing.T) {
 			errSubstr: []string{"DRAIN_SECONDS"},
 		},
 		{
-			name:    "drain at lower bound",
-			cfg:     Config{DrainSeconds: 1, ShutdownBudgetSeconds: 90, APIPort: 8080},
+			name: "drain at lower bound",
+			cfg: Config{
+				DrainSeconds: 1, ShutdownBudgetSeconds: 90, APIPort: 8080,
+				PrometheusEndpoint: "http://p", ClaudeAPIKey: "k", ClaudeModel: "m",
+			},
 			wantErr: false,
 		},
 		{
@@ -138,8 +178,11 @@ func TestValidate(t *testing.T) {
 			errSubstr: []string{"must be greater than"},
 		},
 		{
-			name:    "budget is drain plus one",
-			cfg:     Config{DrainSeconds: 60, ShutdownBudgetSeconds: 61, APIPort: 8080},
+			name: "budget is drain plus one",
+			cfg: Config{
+				DrainSeconds: 60, ShutdownBudgetSeconds: 61, APIPort: 8080,
+				PrometheusEndpoint: "http://p", ClaudeAPIKey: "k", ClaudeModel: "m",
+			},
 			wantErr: false,
 		},
 		// APIPort boundaries
@@ -161,12 +204,40 @@ func TestValidate(t *testing.T) {
 			wantErr:   true,
 			errSubstr: []string{"HTTP_PORT"},
 		},
+		// New string field validation
+		{
+			name: "empty prometheus endpoint",
+			cfg: Config{
+				DrainSeconds: 60, ShutdownBudgetSeconds: 90, APIPort: 8080,
+				PrometheusEndpoint: "", ClaudeAPIKey: "k", ClaudeModel: "m",
+			},
+			wantErr:   true,
+			errSubstr: []string{"PROMETHEUS_ENDPOINT"},
+		},
+		{
+			name: "empty claude api key",
+			cfg: Config{
+				DrainSeconds: 60, ShutdownBudgetSeconds: 90, APIPort: 8080,
+				PrometheusEndpoint: "http://p", ClaudeAPIKey: "", ClaudeModel: "m",
+			},
+			wantErr:   true,
+			errSubstr: []string{"CLAUDE_API_KEY"},
+		},
+		{
+			name: "empty claude model",
+			cfg: Config{
+				DrainSeconds: 60, ShutdownBudgetSeconds: 90, APIPort: 8080,
+				PrometheusEndpoint: "http://p", ClaudeAPIKey: "k", ClaudeModel: "",
+			},
+			wantErr:   true,
+			errSubstr: []string{"CLAUDE_MODEL"},
+		},
 		// Error accumulation: all fields invalid
 		{
 			name:      "all fields invalid",
 			cfg:       Config{DrainSeconds: 0, ShutdownBudgetSeconds: 0, APIPort: 0},
 			wantErr:   true,
-			errSubstr: []string{"DRAIN_SECONDS", "SHUTDOWN_BUDGET_SECONDS", "HTTP_PORT"},
+			errSubstr: []string{"DRAIN_SECONDS", "SHUTDOWN_BUDGET_SECONDS", "HTTP_PORT", "PROMETHEUS_ENDPOINT", "CLAUDE_API_KEY", "CLAUDE_MODEL"},
 		},
 		// Extreme values
 		{
@@ -198,27 +269,33 @@ func TestValidate(t *testing.T) {
 
 func FuzzValidate(f *testing.F) {
 	// Seeds: defaults, boundaries, extremes
-	seeds := []struct{ drain, budget, port int }{
-		{60, 90, 8080},    // defaults
-		{1, 2, 1},         // minimum valid
-		{299, 300, 65535}, // maximum valid
-		{0, 0, 0},         // all zero
-		{-1, -1, -1},      // all negative
-		{300, 300, 65535}, // drain == budget boundary
-		{301, 302, 65536}, // just above max
-		{150, 100, 8080},  // budget < drain
-		{math.MinInt32, math.MinInt32, math.MinInt32},
-		{math.MaxInt32, math.MaxInt32, math.MaxInt32},
+	seeds := []struct {
+		drain, budget, port       int
+		promEndpoint, key, model string
+	}{
+		{60, 90, 8080, "http://localhost:9090", "sk-test", "claude-sonnet"},
+		{1, 2, 1, "http://p", "k", "m"},
+		{299, 300, 65535, "http://p", "k", "m"},
+		{0, 0, 0, "", "", ""},
+		{-1, -1, -1, "", "", ""},
+		{300, 300, 65535, "http://p", "k", "m"},
+		{301, 302, 65536, "", "", ""},
+		{150, 100, 8080, "http://p", "k", "m"},
+		{math.MinInt32, math.MinInt32, math.MinInt32, "", "", ""},
+		{math.MaxInt32, math.MaxInt32, math.MaxInt32, "", "", ""},
 	}
 	for _, s := range seeds {
-		f.Add(s.drain, s.budget, s.port)
+		f.Add(s.drain, s.budget, s.port, s.promEndpoint, s.key, s.model)
 	}
 
-	f.Fuzz(func(t *testing.T, drain, budget, port int) {
+	f.Fuzz(func(t *testing.T, drain, budget, port int, promEndpoint, key, model string) {
 		c := Config{
 			DrainSeconds:          drain,
 			ShutdownBudgetSeconds: budget,
 			APIPort:               port,
+			PrometheusEndpoint:    promEndpoint,
+			ClaudeAPIKey:          key,
+			ClaudeModel:           model,
 		}
 		err := c.Validate()
 
@@ -226,8 +303,11 @@ func FuzzValidate(f *testing.F) {
 		budgetOK := budget >= 1 && budget <= 300
 		portOK := port >= 1 && port <= 65535
 		crossOK := budget > drain
+		promOK := promEndpoint != ""
+		keyOK := key != ""
+		modelOK := model != ""
 
-		allValid := drainOK && budgetOK && portOK && crossOK
+		allValid := drainOK && budgetOK && portOK && crossOK && promOK && keyOK && modelOK
 
 		if allValid && err != nil {
 			t.Errorf("expected no error for valid config %+v, got: %v", c, err)

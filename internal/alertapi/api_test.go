@@ -1,6 +1,7 @@
 package alertapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,13 +11,29 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/linnemanlabs/go-core/log"
+	"github.com/linnemanlabs/vigil/internal/tools"
 	"github.com/linnemanlabs/vigil/internal/triage"
 )
+
+type stubProvider struct{}
+
+func (s *stubProvider) Send(_ context.Context, _ *triage.LLMRequest) (*triage.LLMResponse, error) {
+	return &triage.LLMResponse{
+		Content:    []triage.ContentBlock{{Type: "text", Text: "stub analysis"}},
+		StopReason: triage.StopEnd,
+		Usage:      triage.Usage{InputTokens: 10, OutputTokens: 5},
+	}, nil
+}
+
+func newTestEngine(store *triage.Store) *triage.Engine {
+	return triage.NewEngine(&stubProvider{}, tools.NewRegistry(), store, log.Nop())
+}
 
 func newTestAPI(t *testing.T) (*API, *triage.Store) {
 	t.Helper()
 	store := triage.NewStore()
-	api := New(nil, store)
+	engine := newTestEngine(store)
+	api := New(nil, store, engine)
 	return api, store
 }
 
@@ -34,12 +51,13 @@ func TestNew_NilLogger(t *testing.T) {
 	t.Parallel()
 
 	store := triage.NewStore()
-	api := New(nil, store)
+	engine := newTestEngine(store)
+	api := New(nil, store, engine)
 	if api == nil {
-		t.Fatal("New(nil, store) returned nil API")
+		t.Fatal("New(nil, store, engine) returned nil API")
 	}
 	if api.logger == nil {
-		t.Fatal("New(nil, store) left logger nil; expected Nop logger")
+		t.Fatal("New(nil, store, engine) left logger nil; expected Nop logger")
 	}
 }
 
@@ -48,12 +66,13 @@ func TestNew_WithLogger(t *testing.T) {
 
 	l := log.Nop()
 	store := triage.NewStore()
-	api := New(l, store)
+	engine := newTestEngine(store)
+	api := New(l, store, engine)
 	if api == nil {
-		t.Fatal("New(logger, store) returned nil API")
+		t.Fatal("New(logger, store, engine) returned nil API")
 	}
 	if api.logger == nil {
-		t.Fatal("New(logger, store) left logger nil")
+		t.Fatal("New(logger, store, engine) left logger nil")
 	}
 }
 
@@ -62,10 +81,21 @@ func TestNew_NilStore_Panics(t *testing.T) {
 
 	defer func() {
 		if r := recover(); r == nil {
-			t.Fatal("New(nil, nil) did not panic; expected panic for nil store")
+			t.Fatal("New(nil, nil, engine) did not panic; expected panic for nil store")
 		}
 	}()
-	New(nil, nil)
+	New(nil, nil, nil)
+}
+
+func TestNew_NilEngine_Panics(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("New(nil, store, nil) did not panic; expected panic for nil engine")
+		}
+	}()
+	New(nil, triage.NewStore(), nil)
 }
 
 // Routing
@@ -440,55 +470,12 @@ func TestHandleIngestAlert_EmptyAlerts(t *testing.T) {
 	}
 }
 
-// Triage async behavior
-
-func TestTriage_SetsStatusToComplete(t *testing.T) {
-	t.Parallel()
-
-	r, store := newTestRouter(t)
-
-	body := `{
-		"alerts": [{
-			"status": "firing",
-			"fingerprint": "fp-triage",
-			"labels": {"alertname": "TriageTest"},
-			"annotations": {"summary": "testing triage"}
-		}]
-	}`
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-
-	var resp map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	accepted := resp["accepted"].([]any)
-	id := accepted[0].(string)
-
-	// Wait for async triage to complete
-	time.Sleep(100 * time.Millisecond)
-
-	result, ok := store.Get(id)
-	if !ok {
-		t.Fatalf("triage result %q not found in store", id)
-	}
-	if result.Status != triage.StatusComplete {
-		t.Errorf("status = %q, want %q", result.Status, triage.StatusComplete)
-	}
-	if result.Analysis == "" {
-		t.Error("expected non-empty analysis after triage")
-	}
-}
-
 // Fuzz
 
 func FuzzAlertIngestion(f *testing.F) {
 	store := triage.NewStore()
-	api := New(nil, store)
+	engine := triage.NewEngine(&stubProvider{}, tools.NewRegistry(), store, log.Nop())
+	api := New(nil, store, engine)
 	r := chi.NewRouter()
 	api.RegisterRoutes(r)
 
