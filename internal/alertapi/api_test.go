@@ -7,42 +7,46 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/linnemanlabs/go-core/log"
-	"github.com/linnemanlabs/vigil/internal/tools"
+	"github.com/linnemanlabs/vigil/internal/alert"
 	"github.com/linnemanlabs/vigil/internal/triage"
 )
 
-type stubProvider struct{}
-
-func (s *stubProvider) Send(_ context.Context, _ *triage.LLMRequest) (*triage.LLMResponse, error) {
-	return &triage.LLMResponse{
-		Content:    []triage.ContentBlock{{Type: "text", Text: "stub analysis"}},
-		StopReason: triage.StopEnd,
-		Usage:      triage.Usage{InputTokens: 10, OutputTokens: 5},
-	}, nil
+// stubTriageService implements TriageService for testing.
+type stubTriageService struct {
+	submitFn func(ctx context.Context, al *alert.Alert) (*triage.SubmitResult, error)
+	getFn    func(ctx context.Context, id string) (*triage.Result, bool, error)
 }
 
-func newTestEngine(store *triage.Store) *triage.Engine {
-	return triage.NewEngine(&stubProvider{}, tools.NewRegistry(), store, log.Nop())
+func (s *stubTriageService) Submit(ctx context.Context, al *alert.Alert) (*triage.SubmitResult, error) {
+	if s.submitFn != nil {
+		return s.submitFn(ctx, al)
+	}
+	return &triage.SubmitResult{ID: "stub-id"}, nil
 }
 
-func newTestAPI(t *testing.T) (*API, *triage.Store) {
+func (s *stubTriageService) Get(ctx context.Context, id string) (*triage.Result, bool, error) {
+	if s.getFn != nil {
+		return s.getFn(ctx, id)
+	}
+	return nil, false, nil
+}
+
+func newTestAPI(t *testing.T) (*API, *stubTriageService) {
 	t.Helper()
-	store := triage.NewStore()
-	engine := newTestEngine(store)
-	api := New(nil, store, engine)
-	return api, store
+	svc := &stubTriageService{}
+	api := New(nil, svc)
+	return api, svc
 }
 
-func newTestRouter(t *testing.T) (chi.Router, *triage.Store) {
+func newTestRouter(t *testing.T) (chi.Router, *stubTriageService) {
 	t.Helper()
-	api, store := newTestAPI(t)
+	api, svc := newTestAPI(t)
 	r := chi.NewRouter()
 	api.RegisterRoutes(r)
-	return r, store
+	return r, svc
 }
 
 //  New / constructor
@@ -50,14 +54,13 @@ func newTestRouter(t *testing.T) (chi.Router, *triage.Store) {
 func TestNew_NilLogger(t *testing.T) {
 	t.Parallel()
 
-	store := triage.NewStore()
-	engine := newTestEngine(store)
-	api := New(nil, store, engine)
+	svc := &stubTriageService{}
+	api := New(nil, svc)
 	if api == nil {
-		t.Fatal("New(nil, store, engine) returned nil API")
+		t.Fatal("New(nil, svc) returned nil API")
 	}
 	if api.logger == nil {
-		t.Fatal("New(nil, store, engine) left logger nil; expected Nop logger")
+		t.Fatal("New(nil, svc) left logger nil; expected Nop logger")
 	}
 }
 
@@ -65,37 +68,25 @@ func TestNew_WithLogger(t *testing.T) {
 	t.Parallel()
 
 	l := log.Nop()
-	store := triage.NewStore()
-	engine := newTestEngine(store)
-	api := New(l, store, engine)
+	svc := &stubTriageService{}
+	api := New(l, svc)
 	if api == nil {
-		t.Fatal("New(logger, store, engine) returned nil API")
+		t.Fatal("New(logger, svc) returned nil API")
 	}
 	if api.logger == nil {
-		t.Fatal("New(logger, store, engine) left logger nil")
+		t.Fatal("New(logger, svc) left logger nil")
 	}
 }
 
-func TestNew_NilStore_Panics(t *testing.T) {
+func TestNew_NilService_Panics(t *testing.T) {
 	t.Parallel()
 
 	defer func() {
 		if r := recover(); r == nil {
-			t.Fatal("New(nil, nil, engine) did not panic; expected panic for nil store")
+			t.Fatal("New(nil, nil) did not panic; expected panic for nil service")
 		}
 	}()
-	New(nil, nil, nil)
-}
-
-func TestNew_NilEngine_Panics(t *testing.T) {
-	t.Parallel()
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("New(nil, store, nil) did not panic; expected panic for nil engine")
-		}
-	}()
-	New(nil, triage.NewStore(), nil)
+	New(nil, nil)
 }
 
 // Routing
@@ -152,9 +143,9 @@ func TestRegisterRoutes_Triage(t *testing.T) {
 		path       string
 		wantStatus int
 	}{
-		{"GET with ULID-like ID", http.MethodGet, "/api/v1/triage/01H5K3ABCDEFGHJKMNPQRS", http.StatusOK},
-		{"GET with integer", http.MethodGet, "/api/v1/triage/42", http.StatusOK},
-		{"GET with short string", http.MethodGet, "/api/v1/triage/abc", http.StatusOK},
+		{"GET with ULID-like ID", http.MethodGet, "/api/v1/triage/01H5K3ABCDEFGHJKMNPQRS", http.StatusNotFound},
+		{"GET with integer", http.MethodGet, "/api/v1/triage/42", http.StatusNotFound},
+		{"GET with short string", http.MethodGet, "/api/v1/triage/abc", http.StatusNotFound},
 		{"POST not allowed", http.MethodPost, "/api/v1/triage/123", http.StatusMethodNotAllowed},
 		{"PUT not allowed", http.MethodPut, "/api/v1/triage/123", http.StatusMethodNotAllowed},
 		{"DELETE not allowed", http.MethodDelete, "/api/v1/triage/123", http.StatusMethodNotAllowed},
@@ -209,7 +200,13 @@ func TestRegisterRoutes_NotFound(t *testing.T) {
 func TestHandleIngestAlert_ValidFiringAlert(t *testing.T) {
 	t.Parallel()
 
-	r, store := newTestRouter(t)
+	r, svc := newTestRouter(t)
+	svc.submitFn = func(_ context.Context, al *alert.Alert) (*triage.SubmitResult, error) {
+		if al.Labels["alertname"] != "HighCPU" {
+			t.Errorf("alertname = %q, want HighCPU", al.Labels["alertname"])
+		}
+		return &triage.SubmitResult{ID: "test-id-001"}, nil
+	}
 
 	body := `{
 		"alerts": [{
@@ -238,34 +235,18 @@ func TestHandleIngestAlert_ValidFiringAlert(t *testing.T) {
 	if !ok || len(accepted) != 1 {
 		t.Fatalf("expected 1 accepted ID, got %v", resp["accepted"])
 	}
-
-	id := accepted[0].(string)
-
-	// Give the async goroutine a moment to complete
-	time.Sleep(50 * time.Millisecond)
-
-	result, ok := store.Get(id)
-	if !ok {
-		t.Fatalf("triage result %q not found in store", id)
-	}
-	if result.Alert != "HighCPU" {
-		t.Errorf("alert name = %q, want %q", result.Alert, "HighCPU")
-	}
-	if result.Severity != "critical" {
-		t.Errorf("severity = %q, want %q", result.Severity, "critical")
-	}
-	if result.Summary != "CPU is too high" {
-		t.Errorf("summary = %q, want %q", result.Summary, "CPU is too high")
-	}
-	if result.Fingerprint != "fp-001" {
-		t.Errorf("fingerprint = %q, want %q", result.Fingerprint, "fp-001")
+	if accepted[0].(string) != "test-id-001" {
+		t.Errorf("accepted ID = %q, want %q", accepted[0], "test-id-001")
 	}
 }
 
 func TestHandleIngestAlert_SkipsResolvedAlerts(t *testing.T) {
 	t.Parallel()
 
-	r, _ := newTestRouter(t)
+	r, svc := newTestRouter(t)
+	svc.submitFn = func(_ context.Context, _ *alert.Alert) (*triage.SubmitResult, error) {
+		return &triage.SubmitResult{Skipped: true, Reason: "not firing"}, nil
+	}
 
 	body := `{
 		"alerts": [{
@@ -290,7 +271,6 @@ func TestHandleIngestAlert_SkipsResolvedAlerts(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	// accepted is either null or an empty array - both are fine
 	if accepted, ok := resp["accepted"].([]any); ok && len(accepted) != 0 {
 		t.Errorf("expected 0 accepted IDs for resolved alert, got %d", len(accepted))
 	}
@@ -299,14 +279,10 @@ func TestHandleIngestAlert_SkipsResolvedAlerts(t *testing.T) {
 func TestHandleIngestAlert_DedupPendingFingerprint(t *testing.T) {
 	t.Parallel()
 
-	r, store := newTestRouter(t)
-
-	// Pre-seed a pending result with the same fingerprint
-	store.Put(&triage.Result{
-		ID:          "existing-id",
-		Fingerprint: "fp-dedup",
-		Status:      triage.StatusPending,
-	})
+	r, svc := newTestRouter(t)
+	svc.submitFn = func(_ context.Context, _ *alert.Alert) (*triage.SubmitResult, error) {
+		return &triage.SubmitResult{Skipped: true, Reason: "duplicate"}, nil
+	}
 
 	body := `{
 		"alerts": [{
@@ -336,81 +312,19 @@ func TestHandleIngestAlert_DedupPendingFingerprint(t *testing.T) {
 	}
 }
 
-func TestHandleIngestAlert_DedupInProgressFingerprint(t *testing.T) {
-	t.Parallel()
-
-	r, store := newTestRouter(t)
-
-	store.Put(&triage.Result{
-		ID:          "existing-id",
-		Fingerprint: "fp-inprog",
-		Status:      triage.StatusInProgress,
-	})
-
-	body := `{
-		"alerts": [{
-			"status": "firing",
-			"fingerprint": "fp-inprog",
-			"labels": {"alertname": "InProg"},
-			"annotations": {}
-		}]
-	}`
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-
-	var resp map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if accepted, ok := resp["accepted"].([]any); ok && len(accepted) != 0 {
-		t.Errorf("expected dedup to skip in_progress fingerprint, got %d accepted", len(accepted))
-	}
-}
-
-func TestHandleIngestAlert_AllowsRetriageCompletedFingerprint(t *testing.T) {
-	t.Parallel()
-
-	r, store := newTestRouter(t)
-
-	store.Put(&triage.Result{
-		ID:          "old-id",
-		Fingerprint: "fp-complete",
-		Status:      triage.StatusComplete,
-	})
-
-	body := `{
-		"alerts": [{
-			"status": "firing",
-			"fingerprint": "fp-complete",
-			"labels": {"alertname": "Retriage"},
-			"annotations": {}
-		}]
-	}`
-
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
-
-	var resp map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	accepted, ok := resp["accepted"].([]any)
-	if !ok || len(accepted) != 1 {
-		t.Fatalf("expected 1 accepted for completed-fingerprint retriage, got %v", resp["accepted"])
-	}
-}
-
 func TestHandleIngestAlert_MultipleAlerts(t *testing.T) {
 	t.Parallel()
 
-	r, _ := newTestRouter(t)
+	r, svc := newTestRouter(t)
+	callCount := 0
+	svc.submitFn = func(_ context.Context, al *alert.Alert) (*triage.SubmitResult, error) {
+		callCount++
+		// second alert is resolved, service would skip it
+		if al.Labels["alertname"] == "B" {
+			return &triage.SubmitResult{Skipped: true, Reason: "not firing"}, nil
+		}
+		return &triage.SubmitResult{ID: al.Labels["alertname"] + "-id"}, nil
+	}
 
 	body := `{
 		"alerts": [
@@ -470,12 +384,62 @@ func TestHandleIngestAlert_EmptyAlerts(t *testing.T) {
 	}
 }
 
+// Triage GET handler
+
+func TestHandleGetTriage_Found(t *testing.T) {
+	t.Parallel()
+
+	r, svc := newTestRouter(t)
+	svc.getFn = func(_ context.Context, id string) (*triage.Result, bool, error) {
+		if id == "test-123" {
+			return &triage.Result{
+				ID:       "test-123",
+				Status:   triage.StatusComplete,
+				Analysis: "all good",
+			}, true, nil
+		}
+		return nil, false, nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/triage/test-123", http.NoBody)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var result triage.Result
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if result.ID != "test-123" {
+		t.Errorf("ID = %q, want %q", result.ID, "test-123")
+	}
+	if result.Analysis != "all good" {
+		t.Errorf("analysis = %q, want %q", result.Analysis, "all good")
+	}
+}
+
+func TestHandleGetTriage_NotFound(t *testing.T) {
+	t.Parallel()
+
+	r, _ := newTestRouter(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/triage/nonexistent", http.NoBody)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
 // Fuzz
 
 func FuzzAlertIngestion(f *testing.F) {
-	store := triage.NewStore()
-	engine := triage.NewEngine(&stubProvider{}, tools.NewRegistry(), store, log.Nop())
-	api := New(nil, store, engine)
+	svc := &stubTriageService{}
+	api := New(nil, svc)
 	r := chi.NewRouter()
 	api.RegisterRoutes(r)
 

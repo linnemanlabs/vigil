@@ -1,4 +1,3 @@
-// internal/triage/engine.go
 package triage
 
 import (
@@ -18,34 +17,43 @@ const (
 	ResponseTokens = 4096
 )
 
-// Engine provides the core triage logic, orchestrating interactions between the LLM provider, tool registry, and triage store.
+// RunResult is the outcome of a single Engine.Run invocation.
+type RunResult struct {
+	Status       Status
+	Analysis     string
+	Actions      []string
+	Conversation *Conversation
+	CompletedAt  time.Time
+	Duration     float64
+	TokensUsed   int
+	ToolCalls    int
+}
+
+// Engine provides the core triage logic, orchestrating interactions between
+// the LLM provider and tool registry.
 type Engine struct {
 	provider Provider
 	registry *tools.Registry
-	store    *Store
 	logger   log.Logger
 }
 
 // NewEngine creates a new triage engine with the given dependencies.
-func NewEngine(provider Provider, registry *tools.Registry, store *Store, logger log.Logger) *Engine {
+func NewEngine(provider Provider, registry *tools.Registry, logger log.Logger) *Engine {
 	return &Engine{
 		provider: provider,
 		registry: registry,
-		store:    store,
 		logger:   logger,
 	}
 }
 
-// Run executes the triage process for a given alert, updating the result in the store as it progresses.
-func (e *Engine) Run(ctx context.Context, result *Result, al *alert.Alert) {
+// Run executes the triage process for a given alert. It returns a RunResult
+// containing the outcome; the caller is responsible for persisting it.
+func (e *Engine) Run(ctx context.Context, al *alert.Alert) *RunResult {
 	start := time.Now()
-	result.Status = StatusInProgress
-	e.store.Put(result)
 
 	L := e.logger.With(
-		"triage_id", result.ID,
-		"alert", result.Alert,
-		"fingerprint", result.Fingerprint,
+		"alert", al.Labels["alertname"],
+		"fingerprint", al.Fingerprint,
 	)
 
 	messages := []Message{
@@ -54,19 +62,39 @@ func (e *Engine) Run(ctx context.Context, result *Result, al *alert.Alert) {
 		}},
 	}
 
+	conv := &Conversation{}
 	var totalTokens int
 	var totalToolCalls int
 
 	for {
 		if totalToolCalls >= MaxToolRounds {
 			L.Warn(ctx, "triage hit tool call limit", "limit", MaxToolRounds)
-			result.Analysis = "Triage terminated: tool call budget exhausted"
-			break
+			return &RunResult{
+				Status:       StatusComplete,
+				Analysis:     "Triage terminated: tool call budget exhausted",
+				Conversation: conv,
+				CompletedAt:  time.Now(),
+				Duration:     time.Since(start).Seconds(),
+				TokensUsed:   totalTokens,
+				ToolCalls:    totalToolCalls,
+			}
 		}
 		if totalTokens >= MaxTokens {
 			L.Warn(ctx, "triage hit token limit", "limit", MaxTokens)
-			result.Analysis = "Triage terminated: token budget exhausted"
-			break
+			return &RunResult{
+				Status:       StatusComplete,
+				Analysis:     "Triage terminated: token budget exhausted",
+				Conversation: conv,
+				CompletedAt:  time.Now(),
+				Duration:     time.Since(start).Seconds(),
+				TokensUsed:   totalTokens,
+				ToolCalls:    totalToolCalls,
+			}
+		}
+
+		var toolDefs []tools.ToolDef
+		if e.registry != nil {
+			toolDefs = e.registry.ToToolDefs()
 		}
 
 		// call LLM provider with current conversation
@@ -74,14 +102,19 @@ func (e *Engine) Run(ctx context.Context, result *Result, al *alert.Alert) {
 			MaxTokens: ResponseTokens,
 			System:    buildSystemPrompt(al),
 			Messages:  messages,
-			Tools:     e.registry.ToToolDefs(),
+			Tools:     toolDefs,
 		})
 		if err != nil {
 			L.Error(ctx, err, "llm call failed")
-			result.Status = StatusFailed
-			result.Analysis = fmt.Sprintf("LLM error: %v", err)
-			e.store.Put(result)
-			return
+			return &RunResult{
+				Status:       StatusFailed,
+				Analysis:     fmt.Sprintf("LLM error: %v", err),
+				Conversation: conv,
+				CompletedAt:  time.Now(),
+				Duration:     time.Since(start).Seconds(),
+				TokensUsed:   totalTokens,
+				ToolCalls:    totalToolCalls,
+			}
 		}
 
 		totalTokens += resp.Usage.InputTokens + resp.Usage.OutputTokens
@@ -93,7 +126,15 @@ func (e *Engine) Run(ctx context.Context, result *Result, al *alert.Alert) {
 			"total_tokens", totalTokens,
 		)
 
-		// append assistant response
+		// record assistant turn
+		conv.Turns = append(conv.Turns, Turn{
+			Role:      "assistant",
+			Content:   resp.Content,
+			Timestamp: time.Now(),
+			Usage:     &resp.Usage,
+		})
+
+		// append assistant response to messages
 		messages = append(messages, Message{
 			Role:    "assistant",
 			Content: resp.Content,
@@ -101,12 +142,21 @@ func (e *Engine) Run(ctx context.Context, result *Result, al *alert.Alert) {
 
 		// done - extract final analysis
 		if resp.StopReason == StopEnd {
+			var analysis string
 			for _, block := range resp.Content {
 				if block.Type == "text" {
-					result.Analysis = block.Text
+					analysis = block.Text
 				}
 			}
-			break
+			return &RunResult{
+				Status:       StatusComplete,
+				Analysis:     analysis,
+				Conversation: conv,
+				CompletedAt:  time.Now(),
+				Duration:     time.Since(start).Seconds(),
+				TokensUsed:   totalTokens,
+				ToolCalls:    totalToolCalls,
+			}
 		}
 
 		// handle tool calls
@@ -149,13 +199,19 @@ func (e *Engine) Run(ctx context.Context, result *Result, al *alert.Alert) {
 					continue
 				}
 
-				// append tool results to content for next LLM turn
 				toolResults = append(toolResults, ContentBlock{
 					Type:      "tool_result",
 					ToolUseID: block.ID,
 					Content:   string(output),
 				})
 			}
+
+			// record tool results turn
+			conv.Turns = append(conv.Turns, Turn{
+				Role:      "user",
+				Content:   toolResults,
+				Timestamp: time.Now(),
+			})
 
 			// append tool results to conversation for next LLM turn
 			messages = append(messages, Message{
@@ -164,22 +220,9 @@ func (e *Engine) Run(ctx context.Context, result *Result, al *alert.Alert) {
 			})
 		}
 	}
-
-	result.Status = StatusComplete
-	result.CompletedAt = time.Now()
-	result.Duration = time.Since(start).Seconds()
-	result.TokensUsed = totalTokens
-	result.ToolCalls = totalToolCalls
-	e.store.Put(result)
-
-	L.Info(ctx, "triage complete",
-		"duration", result.Duration,
-		"tokens", totalTokens,
-		"tool_calls", totalToolCalls,
-	)
 }
 
-// buildSystemPrompt constructs the system prompt for the LLM, providing instructions on how to analyze the alert and use tools effectively.
+// buildSystemPrompt constructs the system prompt for the LLM.
 func buildSystemPrompt(_ *alert.Alert) string {
 	return `You are Vigil, an infrastructure triage AI. You analyze alerts and diagnose root causes.
 
@@ -193,7 +236,7 @@ Use them to investigate the alert, then provide a concise analysis with:
 Be concise and operational. This goes to an engineer's Slack channel.`
 }
 
-// buildInitialPrompt constructs the initial user message for the LLM, summarizing the alert details and asking for an investigation.
+// buildInitialPrompt constructs the initial user message for the LLM.
 func buildInitialPrompt(al *alert.Alert) string {
 	labels, _ := json.MarshalIndent(al.Labels, "", "  ")
 	annotations, _ := json.MarshalIndent(al.Annotations, "", "  ")

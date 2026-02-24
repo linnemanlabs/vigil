@@ -1,43 +1,44 @@
 package alertapi
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/linnemanlabs/go-core/log"
 	"github.com/linnemanlabs/go-core/xerrors"
+	"github.com/linnemanlabs/vigil/internal/alert"
 	"github.com/linnemanlabs/vigil/internal/triage"
 )
+
+// TriageService defines the business operations alertapi needs.
+type TriageService interface {
+	Submit(ctx context.Context, al *alert.Alert) (*triage.SubmitResult, error)
+	Get(ctx context.Context, id string) (*triage.Result, bool, error)
+}
 
 // API holds dependencies for HTTP handlers.
 type API struct {
 	logger log.Logger
-	store  *triage.Store
-	engine *triage.Engine
-	// triage service
-	// alerts service
+	svc    TriageService
 }
 
 // New creates a new API handler.
-// logger may be nil, in which case a no-op logger is used
-func New(logger log.Logger, store *triage.Store, engine *triage.Engine) *API {
+func New(logger log.Logger, svc TriageService) *API {
 	if logger == nil {
 		logger = log.Nop()
 	}
-	if store == nil {
-		panic(xerrors.New("triage store is required"))
-	}
-	if engine == nil {
-		panic(xerrors.New("triage engine is required"))
+	if svc == nil {
+		panic(xerrors.New("triage service is required"))
 	}
 	return &API{
 		logger: logger,
-		store:  store,
-		engine: engine,
+		svc:    svc,
 	}
 }
 
-// RegisterRoutes attaches API endpoints to the router
+// RegisterRoutes attaches API endpoints to the router.
 func (a *API) RegisterRoutes(r chi.Router) {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/alerts", a.handleIngestAlert)
@@ -46,5 +47,19 @@ func (a *API) RegisterRoutes(r chi.Router) {
 }
 
 func (a *API) handleGetTriage(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
+	id := chi.URLParam(r, "id")
+
+	result, ok, err := a.svc.Get(r.Context(), id)
+	if err != nil {
+		a.logger.Error(r.Context(), err, "failed to get triage result", "id", id)
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
 }

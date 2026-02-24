@@ -36,6 +36,7 @@ import (
 	"github.com/linnemanlabs/vigil/internal/llm/claude"
 	"github.com/linnemanlabs/vigil/internal/tools"
 	"github.com/linnemanlabs/vigil/internal/triage"
+	"github.com/linnemanlabs/vigil/internal/triage/memstore"
 )
 
 const appName = "vigil"
@@ -195,21 +196,23 @@ func run() error {
 		registry.Register(tools.NewPrometheusQuery(appCfg.PrometheusEndpoint))
 	}
 
-	// Initialize the triage store, which will hold triage results in memory for now.
-	store := triage.NewStore()
+	// Initialize the triage store (in-memory for now).
+	store := memstore.New()
 
-	// Initialize Claude provider. This will be used by the triage
-	// engine to send requests to the LLM with tool information.
+	// Initialize Claude provider.
 	claudeProvider := claude.New(appCfg.ClaudeAPIKey, appCfg.ClaudeModel)
 	if claudeProvider == nil {
 		return fmt.Errorf("failed to initialize Claude provider")
 	}
 
-	// Initialize the triage engine, which will run the LLM and execute tools during triage.
-	claudeEngine := triage.NewEngine(claudeProvider, registry, store, L)
+	// Initialize the triage engine (pure - no store dependency).
+	claudeEngine := triage.NewEngine(claudeProvider, registry, L)
 	if claudeEngine == nil {
 		return fmt.Errorf("failed to initialize triage engine for Claude provider")
 	}
+
+	// Initialize the triage service (owns dedup, lifecycle, async dispatch).
+	triageSvc := triage.NewService(store, claudeEngine, L)
 
 	// setup toggle for server shutdown. this is used to fail readiness checks
 	// during shutdown to drain connections from load balancer before killing the process.
@@ -265,7 +268,7 @@ func run() error {
 	r.Get("/-/ready", health.ReadyzHandler(readiness))
 
 	// register api routes
-	alertapiHTTP := alertapi.New(L, store, claudeEngine)
+	alertapiHTTP := alertapi.New(L, triageSvc)
 	alertapiHTTP.RegisterRoutes(r)
 
 	// middleware stack for main listener, order matters these are wrappers, outermost sees raw request
