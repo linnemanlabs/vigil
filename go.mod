@@ -5,6 +5,7 @@ go 1.25.7
 require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/linnemanlabs/go-core v0.0.0-20260224004351-f744a0dc3777
+	github.com/oklog/ulid/v2 v2.1.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.65.0
 )
 

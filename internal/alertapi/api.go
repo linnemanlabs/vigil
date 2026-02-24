@@ -5,23 +5,30 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/linnemanlabs/go-core/log"
+	"github.com/linnemanlabs/go-core/xerrors"
+	"github.com/linnemanlabs/vigil/internal/triage"
 )
 
 // API holds dependencies for HTTP handlers.
 type API struct {
 	logger log.Logger
+	store  *triage.Store
 	// triage service
 	// alerts service
 }
 
 // New creates a new API handler.
 // logger may be nil, in which case a no-op logger is used
-func New(logger log.Logger) *API {
+func New(logger log.Logger, store *triage.Store) *API {
 	if logger == nil {
 		logger = log.Nop()
 	}
+	if store == nil {
+		panic(xerrors.New("triage store is required"))
+	}
 	return &API{
 		logger: logger,
+		store:  store,
 	}
 }
 
@@ -33,10 +40,6 @@ func (a *API) RegisterRoutes(r chi.Router) {
 	})
 }
 
-func (a *API) handleIngestAlert(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusAccepted)
-}
-
-func (a *API) handleGetTriage(w http.ResponseWriter, _ *http.Request) {
+func (a *API) handleGetTriage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }

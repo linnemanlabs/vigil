@@ -33,6 +33,7 @@ import (
 
 	"github.com/linnemanlabs/vigil/internal/alertapi"
 	vc "github.com/linnemanlabs/vigil/internal/cfg"
+	"github.com/linnemanlabs/vigil/internal/triage"
 )
 
 const appName = "vigil"
@@ -205,6 +206,9 @@ func run() error {
 	opsOpts.UseRecoverMW = true
 	opsOpts.OnPanic = m.IncHttpPanic
 
+	// Initialize the triage store, which will hold triage results in memory for now
+	store := triage.NewStore()
+
 	// start admin/ops listener. sg restricts inbound to internal monitoring infrastructure.
 	// we reject connections from public ips and requests with x-forwarded set in middleware
 	// to prevent accidental exposure if sg is misconfigured or load balancer ever sends traffic here
@@ -240,7 +244,7 @@ func run() error {
 	r.Get("/-/ready", health.ReadyzHandler(readiness))
 
 	// register api routes
-	alertapiHTTP := alertapi.New(L)
+	alertapiHTTP := alertapi.New(L, store)
 	alertapiHTTP.RegisterRoutes(r)
 
 	// middleware stack for main listener, order matters these are wrappers, outermost sees raw request
