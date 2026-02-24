@@ -1,0 +1,66 @@
+{
+  "schema": "phxi.appcfg.v1",
+
+  "app": "vigil",
+  "version_pkg": "github.com/linnemanlabs/vigil/internal/version",
+
+  "defaults": {
+    "platforms": ["linux/amd64", "linux/arm64"],
+    "components": ["vigil"]
+  },
+
+  "oci": {
+    "registry": "682033464915.dkr.ecr.us-east-2.amazonaws.com",
+    "repository_prefix": "vigil",
+    "artifact_types": {
+      "binary": "application/vnd.phxi.binary.v1",
+      "index":  "application/vnd.phxi.binary.index.v1"
+    }
+  },
+
+  "components": {
+    "server": {
+      "go_package": "./cmd/vigil",
+      "repository": "vigil/vigil",
+      "artifact_type": "application/vnd.phxi.binary.v1"
+    }
+  },
+
+  "deploy": {
+    "s3_bucket": "phxi-build-prod-use2-deployment-artifacts",
+    "ssm_release_param": "/app/vigil/vigil/deploy/stable/release/id"
+  },
+
+  "evidence": {
+    "s3_bucket": "phxi-build-prod-use2-deployment-artifacts"
+  },
+
+  "aws": {
+    "ssm_env_param": "/platform/env/name",
+    "ssm_cosign_signer_param": "arn:aws:ssm:us-east-2:130677209948:parameter/app/vigil/signing/cosign/signer"
+  },
+
+  "policy": {
+    "license": {
+      "deny": ["GPL-2.0-only", "GPL-2.0-or-later", "GPL-3.0-only","GPL-3.0-or-later","AGPL-3.0-only","AGPL-3.0-or-later","LGPL-2.1-only","LGPL-2.1-or-later","LGPL-3.0-only","LGPL-3.0-or-later","SSPL-1.0","BUSL-1.1"],
+      "deny_regex": ["(?i)\\bGPL\\b", "(?i)\\bAGPL\\b", "(?i)\\bLGPL\\b"],
+      "allow": ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "BSD-Source-Code", "ISC"],
+      "allow_unknown": false,
+      "max_without_license": 0
+    }
+  },
+
+  "predicates": {
+    "sbom_spdx": "https://spdx.dev/Document",
+    "sbom_cdx":  "https://cyclonedx.org/schema",
+
+    "vuln_trivy":       "https://phxi.net/attestations/trivy/vuln/v1",
+    "vuln_grype":       "https://phxi.net/attestations/grype/vuln/v1",
+    "vuln_govulncheck": "https://phxi.net/attestations/govulncheck/vuln/v1",
+
+    "license_report":   "https://phxi.net/attestations/licenses/v1",
+
+    "release_descriptor":   "https://phxi.net/attestations/release/v1",
+    "inventory_descriptor": "https://phxi.net/attestations/inventory/v1"
+  }
+}
