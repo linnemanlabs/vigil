@@ -37,6 +37,7 @@ import (
 	"github.com/linnemanlabs/vigil/internal/tools"
 	"github.com/linnemanlabs/vigil/internal/triage"
 	"github.com/linnemanlabs/vigil/internal/triage/memstore"
+	"github.com/linnemanlabs/vigil/internal/triage/pgstore"
 )
 
 const appName = "vigil"
@@ -63,6 +64,7 @@ func run() error {
 	// each package registers its own flags and options struct
 	var (
 		appCfg    vc.Config
+		httpCfg   httpserver.Config
 		httpmwCfg httpmw.Config
 		logCfg    log.Config
 		opsCfg    opshttp.Config
@@ -72,6 +74,7 @@ func run() error {
 
 	// register flags for each package, which will be parsed into the shared config struct
 	appCfg.RegisterFlags(flag.CommandLine)
+	httpCfg.RegisterFlags(flag.CommandLine)
 	httpmwCfg.RegisterFlags(flag.CommandLine)
 	logCfg.RegisterFlags(flag.CommandLine)
 	opsCfg.RegisterFlags(flag.CommandLine)
@@ -99,6 +102,7 @@ func run() error {
 
 	if err := errors.Join(
 		appCfg.Validate(),
+		httpCfg.Validate(),
 		httpmwCfg.Validate(),
 		logCfg.Validate(),
 		opsCfg.Validate(),
@@ -192,12 +196,26 @@ func run() error {
 
 	// Initialize the tool registry and register available tools
 	registry := tools.NewRegistry()
+
 	if appCfg.PrometheusEndpoint != "" {
-		registry.Register(tools.NewPrometheusQuery(appCfg.PrometheusEndpoint))
+		prometheusQuery := tools.NewPrometheusQuery(appCfg.PrometheusEndpoint, appCfg.PrometheusTenantID)
+		registry.Register(prometheusQuery)
 	}
 
-	// Initialize the triage store (in-memory for now).
-	store := memstore.New()
+	// Initialize the triage store
+	var triageStore triage.Store
+	if appCfg.DatabaseURL != "" {
+		pgStore, err := pgstore.New(ctx, appCfg.DatabaseURL)
+		if err != nil {
+			return fmt.Errorf("pgstore init: %w", err)
+		}
+		defer pgStore.Close()
+		triageStore = pgStore
+		L.Info(ctx, "using postgres store")
+	} else {
+		triageStore = memstore.New()
+		L.Info(ctx, "using in-memory store (no database-url configured)")
+	}
 
 	// Initialize Claude provider.
 	claudeProvider := claude.New(appCfg.ClaudeAPIKey, appCfg.ClaudeModel)
@@ -212,7 +230,7 @@ func run() error {
 	}
 
 	// Initialize the triage service (owns dedup, lifecycle, async dispatch).
-	triageSvc := triage.NewService(store, claudeEngine, L)
+	triageSvc := triage.NewService(triageStore, claudeEngine, L)
 
 	// setup toggle for server shutdown. this is used to fail readiness checks
 	// during shutdown to drain connections from load balancer before killing the process.
@@ -315,8 +333,15 @@ func run() error {
 	// Security headers outermost to ensure they are served on every response
 	h = httpmw.SecurityHeaders(h)
 
+	// Configure http server options from config
+	alertapiOpts, err := httpCfg.ToOptions()
+	if err != nil {
+		L.Error(ctx, err, "invalid http config")
+		return err
+	}
+
 	// Start alertapi HTTP server with middleware and handlers
-	alertapiHTTPStop, err := httpserver.Start(ctx, fmt.Sprintf(":%d", appCfg.APIPort), h, L)
+	alertapiHTTPStop, err := httpserver.Start(ctx, fmt.Sprintf(":%d", appCfg.APIPort), h, L, alertapiOpts)
 	if err != nil {
 		L.Error(ctx, err, "failed to start alertapi http listener")
 		return err

@@ -13,8 +13,10 @@ type Config struct {
 	ShutdownBudgetSeconds int
 	APIPort               int
 	PrometheusEndpoint    string
+	PrometheusTenantID    string
 	ClaudeAPIKey          string
 	ClaudeModel           string
+	DatabaseURL           string
 }
 
 // RegisterFlags binds Config fields to the given FlagSet with defaults inline
@@ -23,8 +25,10 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.IntVar(&c.ShutdownBudgetSeconds, "shutdown-budget-seconds", 90, "total seconds for component shutdown after drain (1..300)")
 	fs.IntVar(&c.APIPort, "http-port", 8080, "API listen TCP port (1..65535)")
 	fs.StringVar(&c.PrometheusEndpoint, "prometheus-endpoint", "", "Prometheus endpoint for metrics collection by tool use")
+	fs.StringVar(&c.PrometheusTenantID, "prometheus-tenant-id", "", "Prometheus tenant ID for multi-tenant setups")
 	fs.StringVar(&c.ClaudeAPIKey, "claude-api-key", "", "API key for accessing the Claude LLM provider")
 	fs.StringVar(&c.ClaudeModel, "claude-model", "claude-sonnet-4-20250514", "Claude model to use)")
+	fs.StringVar(&c.DatabaseURL, "database-url", "", "PostgreSQL connection URL (empty = in-memory store)")
 }
 
 // Validate checks all configuration fields for correctness.
