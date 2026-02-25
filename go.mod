@@ -5,7 +5,8 @@ go 1.25.7
 require (
 	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/go-chi/chi/v5 v5.2.5
-	github.com/linnemanlabs/go-core v0.0.0-20260224004351-f744a0dc3777
+	github.com/jackc/pgx/v5 v5.8.0
+	github.com/linnemanlabs/go-core v0.0.0-20260225041217-b715342e10c4
 	github.com/oklog/ulid/v2 v2.1.1
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.65.0
 )
@@ -21,6 +22,9 @@ require (
 	github.com/grafana/pyroscope-go v1.2.7 // indirect
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.9 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/compress v1.18.4 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
@@ -28,7 +32,7 @@ require (
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.19.2 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
-	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
