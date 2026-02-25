@@ -6,7 +6,7 @@
 
   "defaults": {
     "platforms": ["linux/amd64", "linux/arm64"],
-    "components": ["vigil"]
+    "components": ["server"]
   },
 
   "oci": {
@@ -20,8 +20,8 @@
 
   "components": {
     "server": {
-      "go_package": "./cmd/vigil",
-      "repository": "vigil/vigil",
+      "go_package": "./cmd/server",
+      "repository": "vigil/server",
       "artifact_type": "application/vnd.phxi.binary.v1"
     }
   },
