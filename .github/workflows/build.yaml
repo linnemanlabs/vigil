@@ -1,0 +1,37 @@
+name: Build App
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.*'
+      
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/keithlinneman/build-system@sha256:aa3119f0fa9c6fb0ee50f62dc4413e7bee369a83537b0a5e39b63b7db518e059
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Configure git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::682033464915:role/app-vigil-build
+          aws-region: us-east-2
+
+      - name: Build and release
+        run: |
+          /build-system/build.sh \
+            --repo . \
+            --ref ${{ github.sha }} \
+            --track stable

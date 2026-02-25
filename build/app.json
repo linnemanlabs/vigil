@@ -28,7 +28,7 @@
 
   "deploy": {
     "s3_bucket": "phxi-build-prod-use2-deployment-artifacts",
-    "ssm_release_param": "/app/vigil/vigil/deploy/stable/release/id"
+    "ssm_release_param": "/app/vigil/server/deploy/stable/release/id"
   },
 
   "evidence": {
