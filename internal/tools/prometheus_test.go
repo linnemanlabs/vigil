@@ -14,7 +14,7 @@ func newTestPrometheus(t *testing.T, handler http.HandlerFunc) (*PrometheusQuery
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return NewPrometheusQuery(srv.URL), srv
+	return NewPrometheusQuery(srv.URL, "test"), srv
 }
 
 func TestPrometheusQuery_Success(t *testing.T) {
@@ -193,7 +193,7 @@ func FuzzPrometheusExecute(f *testing.F) {
 	}))
 	defer srv.Close()
 
-	prom := NewPrometheusQuery(srv.URL)
+	prom := NewPrometheusQuery(srv.URL, "test")
 
 	f.Add(`{"query":"up"}`)
 	f.Add(`{"query":""}`)

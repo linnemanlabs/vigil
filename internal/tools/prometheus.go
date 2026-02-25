@@ -8,17 +8,20 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"time"
 )
 
 type PrometheusQuery struct {
 	endpoint   string
 	httpClient *http.Client
+	tenantID   string
 }
 
-func NewPrometheusQuery(endpoint string) *PrometheusQuery {
+func NewPrometheusQuery(endpoint, tenant string) *PrometheusQuery {
 	return &PrometheusQuery{
 		endpoint: endpoint,
+		tenantID: tenant,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -67,7 +70,8 @@ func (p *PrometheusQuery) Execute(ctx context.Context, params json.RawMessage) (
 	if err != nil {
 		return nil, fmt.Errorf("invalid endpoint: %w", err)
 	}
-	u.Path = "/api/v1/query"
+	// If using mimir ensure you set the endpoint to include /prometheus in the url
+	u.Path = path.Join(u.Path, "api/v1/query")
 
 	q := u.Query()
 	q.Set("query", input.Query)
@@ -79,6 +83,10 @@ func (p *PrometheusQuery) Execute(ctx context.Context, params json.RawMessage) (
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	if p.tenantID != "" {
+		req.Header.Set("X-Scope-OrgID", p.tenantID)
 	}
 
 	resp, err := p.httpClient.Do(req)
