@@ -62,8 +62,32 @@ func (m *mockStore) Put(_ context.Context, r *Result) error {
 		return m.putErr
 	}
 	cp := *r
+	if cp.Conversation == nil {
+		if existing, ok := m.results[r.ID]; ok && existing.Conversation != nil {
+			cp.Conversation = existing.Conversation
+		}
+	}
 	m.results[r.ID] = &cp
 	m.seen[r.Fingerprint] = &cp
+	return nil
+}
+
+func (m *mockStore) AppendTurn(_ context.Context, triageID string, seq int, turn *Turn) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.results[triageID]
+	if !ok {
+		return 0, nil
+	}
+	if r.Conversation == nil {
+		r.Conversation = &Conversation{}
+	}
+	cp := *turn
+	r.Conversation.Turns = append(r.Conversation.Turns, cp)
+	return seq, nil
+}
+
+func (m *mockStore) AppendToolCalls(_ context.Context, _ string, _, _ int, _ *Turn, _ map[string]*ContentBlock) error {
 	return nil
 }
 

@@ -48,7 +48,9 @@ func NewEngine(provider Provider, registry *tools.Registry, logger log.Logger) *
 
 // Run executes the triage process for a given alert. It returns a RunResult
 // containing the outcome; the caller is responsible for persisting it.
-func (e *Engine) Run(ctx context.Context, al *alert.Alert) *RunResult {
+// If onTurn is non-nil it is called after each turn is appended to the
+// conversation; errors are logged but do not abort the triage loop.
+func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) *RunResult {
 	start := time.Now()
 
 	L := e.logger.With(
@@ -133,6 +135,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert) *RunResult {
 			Timestamp: time.Now(),
 			Usage:     &resp.Usage,
 		})
+		notifyTurn(ctx, L, onTurn, conv)
 
 		// append assistant response to messages
 		messages = append(messages, Message{
@@ -161,50 +164,8 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert) *RunResult {
 
 		// handle tool calls
 		if resp.StopReason == StopToolUse {
-			var toolResults []ContentBlock
-
-			for _, block := range resp.Content {
-				if block.Type != "tool_use" {
-					continue
-				}
-
-				totalToolCalls++
-				L.Info(ctx, "executing tool",
-					"tool", block.Name,
-					"call_number", totalToolCalls,
-				)
-
-				// lookup tool
-				tool, ok := e.registry.Get(block.Name)
-				if !ok {
-					toolResults = append(toolResults, ContentBlock{
-						Type:      "tool_result",
-						ToolUseID: block.ID,
-						Content:   fmt.Sprintf("unknown tool: %s", block.Name),
-						IsError:   true,
-					})
-					continue
-				}
-
-				// execute tool
-				output, err := tool.Execute(ctx, block.Input)
-				if err != nil {
-					L.Error(ctx, err, "tool execution failed", "tool", block.Name)
-					toolResults = append(toolResults, ContentBlock{
-						Type:      "tool_result",
-						ToolUseID: block.ID,
-						Content:   fmt.Sprintf("tool error: %v", err),
-						IsError:   true,
-					})
-					continue
-				}
-
-				toolResults = append(toolResults, ContentBlock{
-					Type:      "tool_result",
-					ToolUseID: block.ID,
-					Content:   string(output),
-				})
-			}
+			toolResults, calls := e.executeToolCalls(ctx, L, resp.Content)
+			totalToolCalls += calls
 
 			// record tool results turn
 			conv.Turns = append(conv.Turns, Turn{
@@ -212,6 +173,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert) *RunResult {
 				Content:   toolResults,
 				Timestamp: time.Now(),
 			})
+			notifyTurn(ctx, L, onTurn, conv)
 
 			// append tool results to conversation for next LLM turn
 			messages = append(messages, Message{
@@ -220,6 +182,58 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert) *RunResult {
 			})
 		}
 	}
+}
+
+func notifyTurn(ctx context.Context, logger log.Logger, onTurn TurnCallback, conv *Conversation) {
+	if onTurn == nil {
+		return
+	}
+	seq := len(conv.Turns) - 1
+	if err := onTurn(ctx, seq, &conv.Turns[seq]); err != nil {
+		logger.Warn(ctx, "turn callback failed", "seq", seq, "err", err)
+	}
+}
+
+func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, content []ContentBlock) (results []ContentBlock, calls int) {
+	for i := range content {
+		block := &content[i]
+		if block.Type != "tool_use" {
+			continue
+		}
+
+		calls++
+		logger.Info(ctx, "executing tool", "tool", block.Name, "call_number", calls)
+
+		tool, ok := e.registry.Get(block.Name)
+		if !ok {
+			results = append(results, ContentBlock{
+				Type:      "tool_result",
+				ToolUseID: block.ID,
+				Content:   fmt.Sprintf("unknown tool: %s", block.Name),
+				IsError:   true,
+			})
+			continue
+		}
+
+		output, err := tool.Execute(ctx, block.Input)
+		if err != nil {
+			logger.Error(ctx, err, "tool execution failed", "tool", block.Name)
+			results = append(results, ContentBlock{
+				Type:      "tool_result",
+				ToolUseID: block.ID,
+				Content:   fmt.Sprintf("tool error: %v", err),
+				IsError:   true,
+			})
+			continue
+		}
+
+		results = append(results, ContentBlock{
+			Type:      "tool_result",
+			ToolUseID: block.ID,
+			Content:   string(output),
+		})
+	}
+	return results, calls
 }
 
 // buildSystemPrompt constructs the system prompt for the LLM.

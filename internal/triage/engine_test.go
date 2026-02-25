@@ -81,7 +81,7 @@ func TestRun_SingleTurn(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop())
 
-	rr := engine.Run(context.Background(), testAlert())
+	rr := engine.Run(context.Background(), testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -133,7 +133,7 @@ func TestRun_ToolUseLoop(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop())
 
-	rr := engine.Run(context.Background(), testAlert())
+	rr := engine.Run(context.Background(), testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -176,7 +176,7 @@ func TestRun_UnknownTool(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop())
 
-	rr := engine.Run(context.Background(), testAlert())
+	rr := engine.Run(context.Background(), testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -213,7 +213,7 @@ func TestRun_ToolExecutionError(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop())
 
-	rr := engine.Run(context.Background(), testAlert())
+	rr := engine.Run(context.Background(), testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -232,7 +232,7 @@ func TestRun_LLMError(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop())
 
-	rr := engine.Run(context.Background(), testAlert())
+	rr := engine.Run(context.Background(), testAlert(), nil)
 
 	if rr.Status != StatusFailed {
 		t.Errorf("status = %q, want %q", rr.Status, StatusFailed)
@@ -266,7 +266,7 @@ func TestRun_MaxToolRoundsLimit(t *testing.T) {
 	provider := &mockProvider{responses: responses}
 	engine := NewEngine(provider, registry, log.Nop())
 
-	rr := engine.Run(context.Background(), testAlert())
+	rr := engine.Run(context.Background(), testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -309,7 +309,7 @@ func TestRun_MaxTokensLimit(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop())
 
-	rr := engine.Run(context.Background(), testAlert())
+	rr := engine.Run(context.Background(), testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -341,5 +341,109 @@ func TestBuildInitialPrompt(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("initial prompt missing %q", want)
 		}
+	}
+}
+
+func TestRun_ObserverCalledPerTurn(t *testing.T) {
+	t.Parallel()
+
+	registry := tools.NewRegistry()
+	registry.Register(&mockTool{
+		name:   "obs_tool",
+		output: json.RawMessage(`{"v":"1"}`),
+	})
+
+	provider := &mockProvider{
+		responses: []*LLMResponse{
+			{
+				Content: []ContentBlock{
+					{Type: "tool_use", ID: "c-1", Name: "obs_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: StopToolUse,
+				Usage:      Usage{InputTokens: 10, OutputTokens: 5},
+			},
+			{
+				Content:    []ContentBlock{{Type: "text", Text: "done"}},
+				StopReason: StopEnd,
+				Usage:      Usage{InputTokens: 10, OutputTokens: 5},
+			},
+		},
+	}
+	engine := NewEngine(provider, registry, log.Nop())
+
+	type observed struct {
+		seq  int
+		role string
+	}
+	var mu sync.Mutex
+	var obs []observed
+
+	cb := func(_ context.Context, seq int, turn *Turn) error {
+		mu.Lock()
+		defer mu.Unlock()
+		obs = append(obs, observed{seq: seq, role: turn.Role})
+		return nil
+	}
+
+	rr := engine.Run(context.Background(), testAlert(), cb)
+	if rr.Status != StatusComplete {
+		t.Fatalf("status = %q, want %q", rr.Status, StatusComplete)
+	}
+
+	// Expect 3 callbacks: assistant(0), user/tool_result(1), assistant(2)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(obs) != 3 {
+		t.Fatalf("callback count = %d, want 3", len(obs))
+	}
+	wantRoles := []string{"assistant", "user", "assistant"}
+	for i, want := range wantRoles {
+		if obs[i].role != want {
+			t.Errorf("obs[%d].role = %q, want %q", i, obs[i].role, want)
+		}
+		if obs[i].seq != i {
+			t.Errorf("obs[%d].seq = %d, want %d", i, obs[i].seq, i)
+		}
+	}
+}
+
+func TestRun_ObserverErrorDoesNotAbort(t *testing.T) {
+	t.Parallel()
+
+	registry := tools.NewRegistry()
+	registry.Register(&mockTool{
+		name:   "err_tool",
+		output: json.RawMessage(`{"v":"1"}`),
+	})
+
+	provider := &mockProvider{
+		responses: []*LLMResponse{
+			{
+				Content: []ContentBlock{
+					{Type: "tool_use", ID: "c-1", Name: "err_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: StopToolUse,
+				Usage:      Usage{InputTokens: 10, OutputTokens: 5},
+			},
+			{
+				Content:    []ContentBlock{{Type: "text", Text: "completed"}},
+				StopReason: StopEnd,
+				Usage:      Usage{InputTokens: 10, OutputTokens: 5},
+			},
+		},
+	}
+	engine := NewEngine(provider, registry, log.Nop())
+
+	cb := func(_ context.Context, _ int, _ *Turn) error {
+		return errors.New("callback boom")
+	}
+
+	rr := engine.Run(context.Background(), testAlert(), cb)
+
+	if rr.Status != StatusComplete {
+		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
+	}
+	if rr.Analysis != "completed" {
+		t.Errorf("analysis = %q, want %q", rr.Analysis, "completed")
 	}
 }

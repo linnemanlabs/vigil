@@ -87,12 +87,11 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert) {
 		return
 	}
 
-	rr := s.engine.Run(ctx, al)
+	rr := s.engine.Run(ctx, al, s.buildOnTurn(ctx, id))
 
 	result.Status = rr.Status
 	result.Analysis = rr.Analysis
 	result.Actions = rr.Actions
-	result.Conversation = rr.Conversation
 	result.CompletedAt = rr.CompletedAt
 	result.Duration = rr.Duration
 	result.TokensUsed = rr.TokensUsed
@@ -108,4 +107,50 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert) {
 		"tokens", rr.TokensUsed,
 		"tool_calls", rr.ToolCalls,
 	)
+}
+
+// buildOnTurn returns a TurnCallback that persists each turn incrementally.
+// For assistant turns it calls AppendTurn and stashes the returned messageID.
+// For user turns (tool results) it calls AppendTurn for the message, then
+// AppendToolCalls using the stashed assistant messageID and turn.
+func (s *Service) buildOnTurn(ctx context.Context, triageID string) TurnCallback {
+	L := s.logger.With("triage_id", triageID)
+
+	var lastAssistantMsgID int
+	var lastAssistantSeq int
+	var lastAssistantTurn *Turn
+
+	return func(_ context.Context, seq int, turn *Turn) error {
+		msgID, err := s.store.AppendTurn(ctx, triageID, seq, turn)
+		if err != nil {
+			return err
+		}
+
+		if turn.Role == "assistant" {
+			lastAssistantMsgID = msgID
+			lastAssistantSeq = seq
+			lastAssistantTurn = turn
+			return nil
+		}
+
+		// user turn with tool results - attach tool_calls to the preceding assistant message
+		if lastAssistantTurn == nil {
+			return nil
+		}
+
+		toolResults := make(map[string]*ContentBlock)
+		for i := range turn.Content {
+			block := &turn.Content[i]
+			if block.Type == "tool_result" {
+				toolResults[block.ToolUseID] = block
+			}
+		}
+
+		if err := s.store.AppendToolCalls(ctx, triageID, lastAssistantMsgID, lastAssistantSeq, lastAssistantTurn, toolResults); err != nil {
+			L.Warn(ctx, "failed to persist tool calls", "seq", seq, "err", err)
+		}
+
+		lastAssistantTurn = nil
+		return nil
+	}
 }
