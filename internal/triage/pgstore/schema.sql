@@ -33,12 +33,12 @@ CREATE TABLE IF NOT EXISTS messages (
     seq        INTEGER NOT NULL,
     role       TEXT NOT NULL,
     content    JSONB NOT NULL,
-    tokens_in  INTEGER NOT NULL DEFAULT 0,
-    tokens_out INTEGER NOT NULL DEFAULT 0,
+    tokens_in  INTEGER,
+    tokens_out INTEGER,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    duration_s   DOUBLE PRECISION NOT NULL DEFAULT 0,
-    stop_reason  TEXT NOT NULL DEFAULT '',
-    model        TEXT NOT NULL DEFAULT ''
+    duration_s   DOUBLE PRECISION,
+    stop_reason  TEXT,
+    model        TEXT
 );
 
 -- Tool calls log each invocation of an external tool during the triage process, including inputs, outputs, and errors.
