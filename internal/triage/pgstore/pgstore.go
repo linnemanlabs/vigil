@@ -56,7 +56,7 @@ func (s *Store) Close() {
 }
 
 const triageColumns = `id, fingerprint, status, alert_name, severity, summary, analysis,
-	actions, created_at, completed_at, duration_s, tokens_used, tool_calls, system_prompt, model`
+	tools_used, created_at, completed_at, duration_s, tokens_used, tool_calls, system_prompt, model`
 
 // Get retrieves a triage result by ID.
 //
@@ -211,9 +211,13 @@ func (s *Store) AppendToolCalls(ctx context.Context, triageID string, messageID,
 }
 
 func (s *Store) upsertTriage(ctx context.Context, tx pgx.Tx, r *triage.Result) error {
-	actionsJSON, err := json.Marshal(r.Actions)
+	toolsUsed := r.ToolsUsed
+	if toolsUsed == nil {
+		toolsUsed = []string{}
+	}
+	toolsUsedJSON, err := json.Marshal(toolsUsed)
 	if err != nil {
-		return fmt.Errorf("marshal actions: %w", err)
+		return fmt.Errorf("marshal tools_used: %w", err)
 	}
 
 	var completedAt *time.Time
@@ -223,7 +227,7 @@ func (s *Store) upsertTriage(ctx context.Context, tx pgx.Tx, r *triage.Result) e
 
 	query := `INSERT INTO triage_runs (
 		id, fingerprint, status, alert_name, severity, summary, analysis,
-		actions, created_at, completed_at, duration_s, tokens_used, tool_calls, system_prompt, model
+		tools_used, created_at, completed_at, duration_s, tokens_used, tool_calls, system_prompt, model
 	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 	ON CONFLICT (id) DO UPDATE SET
 		fingerprint   = EXCLUDED.fingerprint,
@@ -232,7 +236,7 @@ func (s *Store) upsertTriage(ctx context.Context, tx pgx.Tx, r *triage.Result) e
 		severity      = EXCLUDED.severity,
 		summary       = EXCLUDED.summary,
 		analysis      = EXCLUDED.analysis,
-		actions       = EXCLUDED.actions,
+		tools_used    = EXCLUDED.tools_used,
 		completed_at  = EXCLUDED.completed_at,
 		duration_s    = EXCLUDED.duration_s,
 		tokens_used   = EXCLUDED.tokens_used,
@@ -242,7 +246,7 @@ func (s *Store) upsertTriage(ctx context.Context, tx pgx.Tx, r *triage.Result) e
 
 	_, err = tx.Exec(ctx, query,
 		r.ID, r.Fingerprint, string(r.Status), r.Alert, r.Severity, r.Summary, r.Analysis,
-		actionsJSON, r.CreatedAt, completedAt, r.Duration, r.TokensUsed, r.ToolCalls,
+		toolsUsedJSON, r.CreatedAt, completedAt, r.Duration, r.TokensUsed, r.ToolCalls,
 		r.SystemPrompt, r.Model,
 	)
 	if err != nil {
@@ -374,15 +378,15 @@ func (s *Store) loadConversation(ctx context.Context, r *triage.Result) error {
 // Returns (nil, nil) when no row is found.
 func (s *Store) scanTriageRow(row pgx.Row) (*triage.Result, error) {
 	var (
-		r           triage.Result
-		status      string
-		actionsJSON []byte
-		completedAt *time.Time
+		r             triage.Result
+		status        string
+		toolsUsedJSON []byte
+		completedAt   *time.Time
 	)
 
 	err := row.Scan(
 		&r.ID, &r.Fingerprint, &status, &r.Alert, &r.Severity, &r.Summary, &r.Analysis,
-		&actionsJSON, &r.CreatedAt, &completedAt, &r.Duration, &r.TokensUsed, &r.ToolCalls,
+		&toolsUsedJSON, &r.CreatedAt, &completedAt, &r.Duration, &r.TokensUsed, &r.ToolCalls,
 		&r.SystemPrompt, &r.Model,
 	)
 	if err != nil {
@@ -398,8 +402,8 @@ func (s *Store) scanTriageRow(row pgx.Row) (*triage.Result, error) {
 		r.CompletedAt = *completedAt
 	}
 
-	if err := json.Unmarshal(actionsJSON, &r.Actions); err != nil {
-		return nil, fmt.Errorf("unmarshal actions: %w", err)
+	if err := json.Unmarshal(toolsUsedJSON, &r.ToolsUsed); err != nil {
+		return nil, fmt.Errorf("unmarshal tools_used: %w", err)
 	}
 
 	return &r, nil

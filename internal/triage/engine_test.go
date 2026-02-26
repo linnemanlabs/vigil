@@ -125,6 +125,9 @@ func TestRun_SingleTurn(t *testing.T) {
 	if turn.Model != "claude-sonnet-4-20250514" {
 		t.Errorf("turn model = %q, want %q", turn.Model, "claude-sonnet-4-20250514")
 	}
+	if len(rr.ToolsUsed) != 0 {
+		t.Errorf("ToolsUsed = %v, want empty", rr.ToolsUsed)
+	}
 }
 
 func TestRun_ToolUseLoop(t *testing.T) {
@@ -172,6 +175,9 @@ func TestRun_ToolUseLoop(t *testing.T) {
 	if len(rr.Conversation.Turns) != 3 {
 		t.Errorf("conversation turns = %d, want 3", len(rr.Conversation.Turns))
 	}
+	if len(rr.ToolsUsed) != 1 || rr.ToolsUsed[0] != "test_tool" {
+		t.Errorf("ToolsUsed = %v, want [test_tool]", rr.ToolsUsed)
+	}
 }
 
 func TestRun_UnknownTool(t *testing.T) {
@@ -204,6 +210,9 @@ func TestRun_UnknownTool(t *testing.T) {
 	}
 	if rr.Analysis != "recovered from unknown tool" {
 		t.Errorf("analysis = %q, want %q", rr.Analysis, "recovered from unknown tool")
+	}
+	if len(rr.ToolsUsed) != 1 || rr.ToolsUsed[0] != "nonexistent_tool" {
+		t.Errorf("ToolsUsed = %v, want [nonexistent_tool]", rr.ToolsUsed)
 	}
 }
 
@@ -241,6 +250,9 @@ func TestRun_ToolExecutionError(t *testing.T) {
 	}
 	if rr.ToolCalls != 1 {
 		t.Errorf("tool_calls = %d, want 1", rr.ToolCalls)
+	}
+	if len(rr.ToolsUsed) != 1 || rr.ToolsUsed[0] != "failing_tool" {
+		t.Errorf("ToolsUsed = %v, want [failing_tool]", rr.ToolsUsed)
 	}
 }
 

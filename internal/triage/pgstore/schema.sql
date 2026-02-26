@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS triage_runs (
     duration_s     DOUBLE PRECISION NOT NULL DEFAULT 0,
     tokens_used  INTEGER NOT NULL DEFAULT 0,
     tool_calls   INTEGER NOT NULL DEFAULT 0,
+    tools_used   JSONB NOT NULL DEFAULT '[]',
     system_prompt TEXT NOT NULL DEFAULT '',
     model         TEXT NOT NULL DEFAULT '');
 

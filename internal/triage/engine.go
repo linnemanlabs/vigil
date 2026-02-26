@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -28,7 +29,7 @@ const (
 type RunResult struct {
 	Status           Status
 	Analysis         string
-	Actions          []string
+	ToolsUsed        []string
 	Conversation     *Conversation
 	CompletedAt      time.Time
 	Duration         float64
@@ -107,6 +108,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 	var totalInputTokens, totalOutputTokens int
 	var totalToolCalls int
 	var lastModel string
+	toolsUsedSet := make(map[string]struct{})
 
 	systemPrompt := buildSystemPrompt(al)
 
@@ -118,6 +120,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 			return &RunResult{
 				Status:           StatusComplete,
 				Analysis:         "Triage terminated: tool call budget exhausted",
+				ToolsUsed:        sortedKeys(toolsUsedSet),
 				Conversation:     conv,
 				CompletedAt:      time.Now(),
 				Duration:         dur,
@@ -136,6 +139,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 			return &RunResult{
 				Status:           StatusComplete,
 				Analysis:         "Triage terminated: token budget exhausted",
+				ToolsUsed:        sortedKeys(toolsUsedSet),
 				Conversation:     conv,
 				CompletedAt:      time.Now(),
 				Duration:         dur,
@@ -176,6 +180,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 			return &RunResult{
 				Status:           StatusFailed,
 				Analysis:         fmt.Sprintf("LLM error: %v", err),
+				ToolsUsed:        sortedKeys(toolsUsedSet),
 				Conversation:     conv,
 				CompletedAt:      time.Now(),
 				Duration:         dur,
@@ -241,6 +246,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 			return &RunResult{
 				Status:           StatusComplete,
 				Analysis:         analysis,
+				ToolsUsed:        sortedKeys(toolsUsedSet),
 				Conversation:     conv,
 				CompletedAt:      time.Now(),
 				Duration:         dur,
@@ -255,7 +261,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 
 		// handle tool calls
 		if resp.StopReason == StopToolUse {
-			toolResults, calls := e.executeToolCalls(ctx, L, resp.Content)
+			toolResults, calls := e.executeToolCalls(ctx, L, resp.Content, toolsUsedSet)
 			totalToolCalls += calls
 
 			// record tool results turn
@@ -285,7 +291,7 @@ func notifyTurn(ctx context.Context, logger log.Logger, onTurn TurnCallback, con
 	}
 }
 
-func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, content []ContentBlock) (results []ContentBlock, calls int) {
+func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, content []ContentBlock, seen map[string]struct{}) (results []ContentBlock, calls int) {
 	for i := range content {
 		block := &content[i]
 		if block.Type != "tool_use" {
@@ -293,6 +299,7 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 		}
 
 		calls++
+		seen[block.Name] = struct{}{}
 		logger.Info(ctx, "executing tool", "tool", block.Name, "call_number", calls)
 
 		tool, ok := e.registry.Get(block.Name)
@@ -363,6 +370,15 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 		})
 	}
 	return results, calls
+}
+
+func sortedKeys(m map[string]struct{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 // buildSystemPrompt constructs the system prompt for the LLM.

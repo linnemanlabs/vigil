@@ -39,7 +39,7 @@ func TestPutAndGet(t *testing.T) {
 		Severity:    "critical",
 		Summary:     "CPU too high",
 		Analysis:    "Looks like a runaway process",
-		Actions:     []string{"restart service", "check logs"},
+		ToolsUsed:   []string{"query_logs", "query_metrics"},
 		CreatedAt:   now,
 		Duration:    1.23,
 		TokensUsed:  500,
@@ -69,8 +69,8 @@ func TestPutAndGet(t *testing.T) {
 	assertEqual(t, "TokensUsed", r.TokensUsed, got.TokensUsed)
 	assertEqual(t, "ToolCalls", r.ToolCalls, got.ToolCalls)
 
-	if len(got.Actions) != 2 || got.Actions[0] != "restart service" || got.Actions[1] != "check logs" {
-		t.Errorf("Actions mismatch: got %v", got.Actions)
+	if len(got.ToolsUsed) != 2 || got.ToolsUsed[0] != "query_logs" || got.ToolsUsed[1] != "query_metrics" {
+		t.Errorf("ToolsUsed mismatch: got %v", got.ToolsUsed)
 	}
 }
 
