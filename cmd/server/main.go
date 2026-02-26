@@ -197,9 +197,20 @@ func run() error {
 	// Initialize the tool registry and register available tools
 	registry := tools.NewRegistry()
 
+	// Register Prometheus query tools if endpoint is configured, this allows the triage engine to query metrics for alert investigation and correlation
 	if appCfg.PrometheusEndpoint != "" {
 		prometheusQuery := tools.NewPrometheusQuery(appCfg.PrometheusEndpoint, appCfg.PrometheusTenantID)
 		registry.Register(prometheusQuery)
+		prometheusQueryRange := tools.NewPrometheusQueryRange(appCfg.PrometheusEndpoint, appCfg.PrometheusTenantID)
+		registry.Register(prometheusQueryRange)
+		L.Info(ctx, "registered Prometheus tools", "endpoint", appCfg.PrometheusEndpoint)
+	}
+
+	// Register Loki query tool if endpoint is configured, this allows the triage engine to query logs for alert investigation and correlation
+	if appCfg.LokiEndpoint != "" {
+		lokiQuery := tools.NewLokiQuery(appCfg.LokiEndpoint, appCfg.LokiTenantID)
+		registry.Register(lokiQuery)
+		L.Info(ctx, "registered Loki tool", "endpoint", appCfg.LokiEndpoint)
 	}
 
 	// Initialize the triage store

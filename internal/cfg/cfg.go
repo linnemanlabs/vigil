@@ -14,6 +14,8 @@ type Config struct {
 	APIPort               int
 	PrometheusEndpoint    string
 	PrometheusTenantID    string
+	LokiEndpoint          string
+	LokiTenantID          string
 	ClaudeAPIKey          string
 	ClaudeModel           string
 	DatabaseURL           string
@@ -29,6 +31,8 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.ClaudeAPIKey, "claude-api-key", "", "API key for accessing the Claude LLM provider")
 	fs.StringVar(&c.ClaudeModel, "claude-model", "claude-sonnet-4-20250514", "Claude model to use)")
 	fs.StringVar(&c.DatabaseURL, "database-url", "", "PostgreSQL connection URL (empty = in-memory store)")
+	fs.StringVar(&c.LokiEndpoint, "loki-endpoint", "", "Loki endpoint for log collection by tool use")
+	fs.StringVar(&c.LokiTenantID, "loki-tenant-id", "", "Loki tenant ID for multi-tenant setups")
 }
 
 // Validate checks all configuration fields for correctness.

@@ -43,7 +43,6 @@ func (r *Registry) Get(name string) (Tool, bool) {
 }
 
 // ToToolDefs returns the tool definitions in Claude API format.
-// internal/tools/tool.go
 func (r *Registry) ToToolDefs() []ToolDef {
 	out := make([]ToolDef, 0, len(r.tools))
 	for _, t := range r.tools {
