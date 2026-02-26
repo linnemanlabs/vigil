@@ -8,7 +8,6 @@ CREATE TABLE IF NOT EXISTS triage_runs (
     severity     TEXT NOT NULL DEFAULT '',
     summary      TEXT NOT NULL DEFAULT '',
     analysis     TEXT NOT NULL DEFAULT '',
-    actions      JSONB NOT NULL DEFAULT '[]',
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ,
     duration_s     DOUBLE PRECISION NOT NULL DEFAULT 0,
