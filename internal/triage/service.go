@@ -22,19 +22,24 @@ type SubmitResult struct {
 
 // Service is the business boundary for triage operations.
 type Service struct {
-	store   Store
-	engine  *Engine
-	logger  log.Logger
-	metrics *Metrics
+	store    Store
+	engine   *Engine
+	logger   log.Logger
+	metrics  *Metrics
+	notifier Notifier
 }
 
-// NewService creates a new triage service. Metrics may be nil.
-func NewService(store Store, engine *Engine, logger log.Logger, metrics *Metrics) *Service {
+// NewService creates a new triage service. Metrics and notifier may be nil.
+func NewService(store Store, engine *Engine, logger log.Logger, metrics *Metrics, notifier Notifier) *Service {
+	if notifier == nil {
+		notifier = nopNotifier{}
+	}
 	return &Service{
-		store:   store,
-		engine:  engine,
-		logger:  logger,
-		metrics: metrics,
+		store:    store,
+		engine:   engine,
+		logger:   logger,
+		metrics:  metrics,
+		notifier: notifier,
 	}
 }
 
@@ -138,7 +143,7 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 
 	result.Status = rr.Status
 	result.Analysis = rr.Analysis
-	result.Actions = rr.Actions
+	result.ToolsUsed = rr.ToolsUsed
 	result.CompletedAt = rr.CompletedAt
 	result.Duration = rr.Duration
 	result.TokensUsed = rr.TokensUsed
@@ -159,6 +164,10 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 	)
 	if rr.Status == StatusFailed {
 		triageSpan.SetStatus(codes.Error, rr.Analysis)
+	}
+
+	if err := s.notifier.Send(ctx, result); err != nil {
+		L.Warn(ctx, "slack notification failed", "err", err)
 	}
 
 	L.Info(ctx, "triage complete",

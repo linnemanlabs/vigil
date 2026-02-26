@@ -249,7 +249,7 @@ func run() error {
 	// Initialize Slack notifier for triage result notifications.
 	var notifier triage.Notifier
 	if appCfg.SlackWebhookURL != "" {
-		notifier = slack.New(appCfg.SlackWebhookURL, L)
+		notifier = slack.New(appCfg.SlackWebhookURL)
 		L.Info(ctx, "slack notifications enabled")
 	}
 

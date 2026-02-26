@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/linnemanlabs/go-core/log"
 	"github.com/linnemanlabs/vigil/internal/triage"
 )
 
@@ -25,15 +24,13 @@ const (
 type Notifier struct {
 	webhookURL string
 	client     *http.Client
-	logger     log.Logger
 }
 
 // New creates a new Slack notifier. If webhookURL is empty, Send is a no-op.
-func New(webhookURL string, logger log.Logger) *Notifier {
+func New(webhookURL string) *Notifier {
 	return &Notifier{
 		webhookURL: webhookURL,
 		client:     &http.Client{Timeout: httpTimeout},
-		logger:     logger,
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -89,6 +90,31 @@ func (m *mockStore) AppendTurn(_ context.Context, triageID string, seq int, turn
 
 func (m *mockStore) AppendToolCalls(_ context.Context, _ string, _, _ int, _ *Turn, _ map[string]*ContentBlock) error {
 	return nil
+}
+
+// mockNotifier tracks Send calls for testing.
+type mockNotifier struct {
+	mu     sync.Mutex
+	calls  int
+	last   *Result
+	err    error
+	called chan struct{}
+}
+
+func newMockNotifier() *mockNotifier {
+	return &mockNotifier{called: make(chan struct{}, 1)}
+}
+
+func (m *mockNotifier) Send(_ context.Context, r *Result) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	m.last = r
+	select {
+	case m.called <- struct{}{}:
+	default:
+	}
+	return m.err
 }
 
 func TestSubmit_SkipsResolvedAlerts(t *testing.T) {
@@ -281,4 +307,101 @@ func TestSubmit_AsyncTriageCompletes(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("triage did not complete within deadline")
+}
+
+func TestSubmit_NotifiesOnCompletion(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	notifier := newMockNotifier()
+	provider := &mockProvider{
+		responses: []*LLMResponse{{
+			Content:    []ContentBlock{{Type: "text", Text: "notified analysis"}},
+			StopReason: StopEnd,
+			Usage:      Usage{InputTokens: 100, OutputTokens: 50},
+		}},
+	}
+	engine := NewEngine(provider, nil, log.Nop(), EngineHooks{})
+	svc := NewService(store, engine, log.Nop(), nil, notifier)
+
+	sr, err := svc.Submit(context.Background(), &alert.Alert{
+		Status:      "firing",
+		Fingerprint: "fp-notify",
+		Labels:      map[string]string{"alertname": "NotifyTest"},
+		Annotations: map[string]string{"summary": "test"},
+	})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	select {
+	case <-notifier.called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("notifier was not called within deadline")
+	}
+
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+
+	if notifier.calls != 1 {
+		t.Errorf("notifier calls = %d, want 1", notifier.calls)
+	}
+	if notifier.last == nil {
+		t.Fatal("expected notifier to receive result")
+	}
+	if notifier.last.ID != sr.ID {
+		t.Errorf("notifier result ID = %q, want %q", notifier.last.ID, sr.ID)
+	}
+	if notifier.last.Analysis != "notified analysis" {
+		t.Errorf("notifier result analysis = %q, want %q", notifier.last.Analysis, "notified analysis")
+	}
+}
+
+func TestSubmit_NotifierErrorDoesNotFail(t *testing.T) {
+	t.Parallel()
+
+	store := newMockStore()
+	notifier := newMockNotifier()
+	notifier.err = errors.New("webhook down")
+
+	var completed atomic.Bool
+	provider := &mockProvider{
+		responses: []*LLMResponse{{
+			Content:    []ContentBlock{{Type: "text", Text: "analysis despite notify error"}},
+			StopReason: StopEnd,
+			Usage:      Usage{InputTokens: 100, OutputTokens: 50},
+		}},
+	}
+	engine := NewEngine(provider, nil, log.Nop(), EngineHooks{})
+	svc := NewService(store, engine, log.Nop(), nil, notifier)
+
+	sr, err := svc.Submit(context.Background(), &alert.Alert{
+		Status:      "firing",
+		Fingerprint: "fp-notify-err",
+		Labels:      map[string]string{"alertname": "NotifyErrTest"},
+		Annotations: map[string]string{"summary": "test"},
+	})
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	// Wait for triage to complete by polling the store.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		r, ok, _ := store.Get(context.Background(), sr.ID)
+		if ok && (r.Status == StatusComplete || r.Status == StatusFailed) {
+			completed.Store(true)
+			if r.Status != StatusComplete {
+				t.Errorf("status = %q, want %q", r.Status, StatusComplete)
+			}
+			if r.Analysis != "analysis despite notify error" {
+				t.Errorf("analysis = %q, want %q", r.Analysis, "analysis despite notify error")
+			}
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !completed.Load() {
+		t.Fatal("triage did not complete within deadline")
+	}
 }

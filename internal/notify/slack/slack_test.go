@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/linnemanlabs/go-core/log"
 	"github.com/linnemanlabs/vigil/internal/triage"
 )
 
@@ -28,7 +27,7 @@ func TestSend_PostsToWebhook(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := New(srv.URL, log.Nop())
+	n := New(srv.URL)
 	result := &triage.Result{
 		ID:          "01JN123",
 		Status:      triage.StatusComplete,
@@ -70,7 +69,7 @@ func TestSend_PostsToWebhook(t *testing.T) {
 func TestSend_NoOpWithoutURL(t *testing.T) {
 	t.Parallel()
 
-	n := New("", log.Nop())
+	n := New("")
 	if err := n.Send(context.Background(), &triage.Result{}); err != nil {
 		t.Fatalf("Send with empty URL should be no-op, got: %v", err)
 	}
@@ -89,7 +88,7 @@ func TestSend_TruncatesLongAnalysis(t *testing.T) {
 	defer srv.Close()
 
 	longAnalysis := strings.Repeat("x", 4000)
-	n := New(srv.URL, log.Nop())
+	n := New(srv.URL)
 	err := n.Send(context.Background(), &triage.Result{
 		ID:       "01JN456",
 		Status:   triage.StatusComplete,
@@ -172,7 +171,7 @@ func TestSend_NonOKStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	n := New(srv.URL, log.Nop())
+	n := New(srv.URL)
 	err := n.Send(context.Background(), &triage.Result{
 		ID:     "01JN789",
 		Status: triage.StatusComplete,
