@@ -26,6 +26,7 @@ type LLMResponse struct {
 	Content    []ContentBlock
 	StopReason StopReason
 	Usage      Usage
+	Model      string
 }
 
 // StopReason indicates why the LLM stopped generating content, such as reaching the end of the response or requesting a tool call.

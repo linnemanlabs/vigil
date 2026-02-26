@@ -11,10 +11,11 @@ CREATE TABLE IF NOT EXISTS triage_runs (
     actions      JSONB NOT NULL DEFAULT '[]',
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ,
-    duration     DOUBLE PRECISION NOT NULL DEFAULT 0,
+    duration_s     DOUBLE PRECISION NOT NULL DEFAULT 0,
     tokens_used  INTEGER NOT NULL DEFAULT 0,
-    tool_calls   INTEGER NOT NULL DEFAULT 0
-);
+    tool_calls   INTEGER NOT NULL DEFAULT 0,
+    system_prompt TEXT NOT NULL DEFAULT '',
+    model         TEXT NOT NULL DEFAULT '');
 
 CREATE INDEX IF NOT EXISTS idx_triage_runs_fingerprint ON triage_runs (fingerprint);
 CREATE INDEX IF NOT EXISTS idx_triage_runs_status ON triage_runs (status);
@@ -32,9 +33,12 @@ CREATE TABLE IF NOT EXISTS messages (
     seq        INTEGER NOT NULL,
     role       TEXT NOT NULL,
     content    JSONB NOT NULL,
-    tokens_in  INTEGER,
-    tokens_out INTEGER,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    tokens_in  INTEGER NOT NULL DEFAULT 0,
+    tokens_out INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    duration_s   DOUBLE PRECISION NOT NULL DEFAULT 0,
+    stop_reason  TEXT NOT NULL DEFAULT '',
+    model        TEXT NOT NULL DEFAULT ''
 );
 
 -- Tool calls log each invocation of an external tool during the triage process, including inputs, outputs, and errors.
@@ -49,7 +53,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     input_bytes  INTEGER NOT NULL DEFAULT 0,
     output_bytes INTEGER NOT NULL DEFAULT 0,
     is_error     BOOLEAN NOT NULL DEFAULT false,
-    duration_s   DOUBLE PRECISION,
+    duration_s   DOUBLE PRECISION NOT NULL DEFAULT 0,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

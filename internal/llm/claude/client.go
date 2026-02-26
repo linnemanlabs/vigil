@@ -147,5 +147,6 @@ func fromSDKResponse(r *anthropic.Message) *triage.LLMResponse {
 			InputTokens:  int(r.Usage.InputTokens),
 			OutputTokens: int(r.Usage.OutputTokens),
 		},
+		Model: string(r.Model),
 	}
 }

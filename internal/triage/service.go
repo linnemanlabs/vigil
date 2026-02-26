@@ -113,6 +113,8 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert) {
 	result.Duration = rr.Duration
 	result.TokensUsed = rr.TokensUsed
 	result.ToolCalls = rr.ToolCalls
+	result.SystemPrompt = rr.SystemPrompt
+	result.Model = rr.Model
 
 	if err := s.store.Put(ctx, result); err != nil {
 		L.Error(ctx, err, "failed to persist triage result")

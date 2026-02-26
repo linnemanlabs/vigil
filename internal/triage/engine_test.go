@@ -77,6 +77,7 @@ func TestRun_SingleTurn(t *testing.T) {
 			Content:    []ContentBlock{{Type: "text", Text: "analysis: all good"}},
 			StopReason: StopEnd,
 			Usage:      Usage{InputTokens: 100, OutputTokens: 50},
+			Model:      "claude-sonnet-4-20250514",
 		}},
 	}
 	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
@@ -103,6 +104,22 @@ func TestRun_SingleTurn(t *testing.T) {
 	}
 	if rr.Conversation.Turns[0].Usage == nil {
 		t.Error("expected usage on assistant turn")
+	}
+	if rr.SystemPrompt == "" {
+		t.Error("expected non-empty SystemPrompt")
+	}
+	if rr.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("model = %q, want %q", rr.Model, "claude-sonnet-4-20250514")
+	}
+	turn := rr.Conversation.Turns[0]
+	if turn.StopReason != string(StopEnd) {
+		t.Errorf("turn stop_reason = %q, want %q", turn.StopReason, StopEnd)
+	}
+	if turn.Duration <= 0 {
+		t.Error("expected positive turn duration")
+	}
+	if turn.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("turn model = %q, want %q", turn.Model, "claude-sonnet-4-20250514")
 	}
 }
 

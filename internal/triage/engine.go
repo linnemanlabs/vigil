@@ -27,6 +27,8 @@ type RunResult struct {
 	Duration     float64
 	TokensUsed   int
 	ToolCalls    int
+	SystemPrompt string
+	Model        string
 }
 
 // EngineHooks provides optional callbacks for instrumenting engine operations.
@@ -95,6 +97,9 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 	conv := &Conversation{}
 	var totalTokens int
 	var totalToolCalls int
+	var lastModel string
+
+	systemPrompt := buildSystemPrompt(al)
 
 	for {
 		if totalToolCalls >= MaxToolRounds {
@@ -109,6 +114,8 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 				Duration:     dur,
 				TokensUsed:   totalTokens,
 				ToolCalls:    totalToolCalls,
+				SystemPrompt: systemPrompt,
+				Model:        lastModel,
 			}
 		}
 		if totalTokens >= MaxTokens {
@@ -123,6 +130,8 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 				Duration:     dur,
 				TokensUsed:   totalTokens,
 				ToolCalls:    totalToolCalls,
+				SystemPrompt: systemPrompt,
+				Model:        lastModel,
 			}
 		}
 
@@ -135,7 +144,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 		llmStart := time.Now()
 		resp, err := e.provider.Send(ctx, &LLMRequest{
 			MaxTokens: ResponseTokens,
-			System:    buildSystemPrompt(al),
+			System:    systemPrompt,
 			Messages:  messages,
 			Tools:     toolDefs,
 		})
@@ -151,11 +160,15 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 				Duration:     dur,
 				TokensUsed:   totalTokens,
 				ToolCalls:    totalToolCalls,
+				SystemPrompt: systemPrompt,
+				Model:        lastModel,
 			}
 		}
 
+		llmDur := time.Since(llmStart).Seconds()
 		totalTokens += resp.Usage.InputTokens + resp.Usage.OutputTokens
-		e.hooks.llmCall(resp.Usage.InputTokens, resp.Usage.OutputTokens, time.Since(llmStart).Seconds())
+		lastModel = resp.Model
+		e.hooks.llmCall(resp.Usage.InputTokens, resp.Usage.OutputTokens, llmDur)
 
 		L.Info(ctx, "llm response",
 			"stop_reason", resp.StopReason,
@@ -166,10 +179,13 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 
 		// record assistant turn
 		conv.Turns = append(conv.Turns, Turn{
-			Role:      "assistant",
-			Content:   resp.Content,
-			Timestamp: time.Now(),
-			Usage:     &resp.Usage,
+			Role:       "assistant",
+			Content:    resp.Content,
+			Timestamp:  time.Now(),
+			Usage:      &resp.Usage,
+			StopReason: string(resp.StopReason),
+			Duration:   llmDur,
+			Model:      resp.Model,
 		})
 		notifyTurn(ctx, L, onTurn, conv)
 
@@ -197,6 +213,8 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 				Duration:     dur,
 				TokensUsed:   totalTokens,
 				ToolCalls:    totalToolCalls,
+				SystemPrompt: systemPrompt,
+				Model:        lastModel,
 			}
 		}
 

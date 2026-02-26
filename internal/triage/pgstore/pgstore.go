@@ -49,7 +49,7 @@ func (s *Store) Close() {
 }
 
 const triageColumns = `id, fingerprint, status, alert_name, severity, summary, analysis,
-	actions, created_at, completed_at, duration, tokens_used, tool_calls`
+	actions, created_at, completed_at, duration_s, tokens_used, tool_calls, system_prompt, model`
 
 // Get retrieves a triage result by ID.
 func (s *Store) Get(ctx context.Context, id string) (*triage.Result, bool, error) {
@@ -156,24 +156,27 @@ func (s *Store) upsertTriage(ctx context.Context, tx pgx.Tx, r *triage.Result) e
 
 	query := `INSERT INTO triage_runs (
 		id, fingerprint, status, alert_name, severity, summary, analysis,
-		actions, created_at, completed_at, duration, tokens_used, tool_calls
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		actions, created_at, completed_at, duration_s, tokens_used, tool_calls, system_prompt, model
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 	ON CONFLICT (id) DO UPDATE SET
-		fingerprint  = EXCLUDED.fingerprint,
-		status       = EXCLUDED.status,
-		alert_name   = EXCLUDED.alert_name,
-		severity     = EXCLUDED.severity,
-		summary      = EXCLUDED.summary,
-		analysis     = EXCLUDED.analysis,
-		actions      = EXCLUDED.actions,
-		completed_at = EXCLUDED.completed_at,
-		duration     = EXCLUDED.duration,
-		tokens_used  = EXCLUDED.tokens_used,
-		tool_calls   = EXCLUDED.tool_calls`
+		fingerprint   = EXCLUDED.fingerprint,
+		status        = EXCLUDED.status,
+		alert_name    = EXCLUDED.alert_name,
+		severity      = EXCLUDED.severity,
+		summary       = EXCLUDED.summary,
+		analysis      = EXCLUDED.analysis,
+		actions       = EXCLUDED.actions,
+		completed_at  = EXCLUDED.completed_at,
+		duration_s    = EXCLUDED.duration_s,
+		tokens_used   = EXCLUDED.tokens_used,
+		tool_calls    = EXCLUDED.tool_calls,
+		system_prompt = EXCLUDED.system_prompt,
+		model         = EXCLUDED.model`
 
 	_, err = tx.Exec(ctx, query,
 		r.ID, r.Fingerprint, string(r.Status), r.Alert, r.Severity, r.Summary, r.Analysis,
 		actionsJSON, r.CreatedAt, completedAt, r.Duration, r.TokensUsed, r.ToolCalls,
+		r.SystemPrompt, r.Model,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert triage: %w", err)
@@ -195,10 +198,11 @@ func (s *Store) insertMessage(ctx context.Context, tx pgx.Tx, triageID string, s
 
 	var messageID int
 	err = tx.QueryRow(ctx,
-		`INSERT INTO messages (triage_id, seq, role, content, tokens_in, tokens_out, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO messages (triage_id, seq, role, content, tokens_in, tokens_out, created_at, duration_s, stop_reason, model)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING id`,
 		triageID, seq, turn.Role, contentJSON, tokensIn, tokensOut, turn.Timestamp,
+		turn.Duration, turn.StopReason, turn.Model,
 	).Scan(&messageID)
 	if err != nil {
 		return 0, fmt.Errorf("insert message seq %d: %w", seq, err)
@@ -239,7 +243,7 @@ func (s *Store) insertToolCalls(ctx context.Context, tx pgx.Tx, triageID string,
 // loadConversation reads messages and reconstructs the Conversation on a Result.
 func (s *Store) loadConversation(ctx context.Context, r *triage.Result) error {
 	rows, err := s.pool.Query(ctx,
-		`SELECT seq, role, content, tokens_in, tokens_out, created_at
+		`SELECT seq, role, content, tokens_in, tokens_out, created_at, duration_s, stop_reason, model
 		 FROM messages WHERE triage_id = $1 ORDER BY seq`,
 		r.ID,
 	)
@@ -257,8 +261,11 @@ func (s *Store) loadConversation(ctx context.Context, r *triage.Result) error {
 			tokensIn    *int
 			tokensOut   *int
 			createdAt   time.Time
+			durationS   float64
+			stopReason  string
+			model       string
 		)
-		if err := rows.Scan(&seq, &role, &contentJSON, &tokensIn, &tokensOut, &createdAt); err != nil {
+		if err := rows.Scan(&seq, &role, &contentJSON, &tokensIn, &tokensOut, &createdAt, &durationS, &stopReason, &model); err != nil {
 			return fmt.Errorf("scan message: %w", err)
 		}
 
@@ -268,9 +275,12 @@ func (s *Store) loadConversation(ctx context.Context, r *triage.Result) error {
 		}
 
 		turn := triage.Turn{
-			Role:      role,
-			Content:   content,
-			Timestamp: createdAt,
+			Role:       role,
+			Content:    content,
+			Timestamp:  createdAt,
+			StopReason: stopReason,
+			Duration:   durationS,
+			Model:      model,
 		}
 		if tokensIn != nil || tokensOut != nil {
 			turn.Usage = &triage.Usage{}
@@ -306,6 +316,7 @@ func (s *Store) scanTriageRow(row pgx.Row) (*triage.Result, error) {
 	err := row.Scan(
 		&r.ID, &r.Fingerprint, &status, &r.Alert, &r.Severity, &r.Summary, &r.Analysis,
 		&actionsJSON, &r.CreatedAt, &completedAt, &r.Duration, &r.TokensUsed, &r.ToolCalls,
+		&r.SystemPrompt, &r.Model,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

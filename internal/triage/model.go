@@ -35,6 +35,8 @@ type Result struct {
 	Duration     float64       `json:"duration_seconds,omitempty"`
 	TokensUsed   int           `json:"tokens_used,omitempty"`
 	ToolCalls    int           `json:"tool_calls,omitempty"`
+	SystemPrompt string        `json:"system_prompt,omitempty"`
+	Model        string        `json:"model,omitempty"`
 }
 
 // Conversation records the full LLM interaction during a triage run.
@@ -44,8 +46,11 @@ type Conversation struct {
 
 // Turn is a single exchange in the conversation (assistant response or tool results).
 type Turn struct {
-	Role      string         `json:"role"`
-	Content   []ContentBlock `json:"content"`
-	Timestamp time.Time      `json:"timestamp"`
-	Usage     *Usage         `json:"usage,omitempty"`
+	Role       string         `json:"role"`
+	Content    []ContentBlock `json:"content"`
+	Timestamp  time.Time      `json:"timestamp"`
+	Usage      *Usage         `json:"usage,omitempty"`
+	StopReason string         `json:"stop_reason,omitempty"`
+	Duration   float64        `json:"duration,omitempty"`
+	Model      string         `json:"model,omitempty"`
 }
