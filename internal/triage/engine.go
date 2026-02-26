@@ -29,20 +29,48 @@ type RunResult struct {
 	ToolCalls    int
 }
 
+// EngineHooks provides optional callbacks for instrumenting engine operations.
+// All fields are optional, nil callbacks are safely ignored.
+type EngineHooks struct {
+	OnLLMCall  func(inputTokens, outputTokens int, duration float64)
+	OnToolCall func(name string, duration float64, inputBytes, outputBytes int, isError bool)
+	OnComplete func(status Status, duration float64, tokens, toolCalls int)
+}
+
+func (h *EngineHooks) llmCall(in, out int, dur float64) {
+	if h.OnLLMCall != nil {
+		h.OnLLMCall(in, out, dur)
+	}
+}
+
+func (h *EngineHooks) toolCall(name string, dur float64, inBytes, outBytes int, isErr bool) {
+	if h.OnToolCall != nil {
+		h.OnToolCall(name, dur, inBytes, outBytes, isErr)
+	}
+}
+
+func (h *EngineHooks) complete(status Status, dur float64, tokens, calls int) {
+	if h.OnComplete != nil {
+		h.OnComplete(status, dur, tokens, calls)
+	}
+}
+
 // Engine provides the core triage logic, orchestrating interactions between
 // the LLM provider and tool registry.
 type Engine struct {
 	provider Provider
 	registry *tools.Registry
 	logger   log.Logger
+	hooks    EngineHooks
 }
 
 // NewEngine creates a new triage engine with the given dependencies.
-func NewEngine(provider Provider, registry *tools.Registry, logger log.Logger) *Engine {
+func NewEngine(provider Provider, registry *tools.Registry, logger log.Logger, hooks EngineHooks) *Engine {
 	return &Engine{
 		provider: provider,
 		registry: registry,
 		logger:   logger,
+		hooks:    hooks,
 	}
 }
 
@@ -71,24 +99,28 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 	for {
 		if totalToolCalls >= MaxToolRounds {
 			L.Warn(ctx, "triage hit tool call limit", "limit", MaxToolRounds)
+			dur := time.Since(start).Seconds()
+			e.hooks.complete(StatusComplete, dur, totalTokens, totalToolCalls)
 			return &RunResult{
 				Status:       StatusComplete,
 				Analysis:     "Triage terminated: tool call budget exhausted",
 				Conversation: conv,
 				CompletedAt:  time.Now(),
-				Duration:     time.Since(start).Seconds(),
+				Duration:     dur,
 				TokensUsed:   totalTokens,
 				ToolCalls:    totalToolCalls,
 			}
 		}
 		if totalTokens >= MaxTokens {
 			L.Warn(ctx, "triage hit token limit", "limit", MaxTokens)
+			dur := time.Since(start).Seconds()
+			e.hooks.complete(StatusComplete, dur, totalTokens, totalToolCalls)
 			return &RunResult{
 				Status:       StatusComplete,
 				Analysis:     "Triage terminated: token budget exhausted",
 				Conversation: conv,
 				CompletedAt:  time.Now(),
-				Duration:     time.Since(start).Seconds(),
+				Duration:     dur,
 				TokensUsed:   totalTokens,
 				ToolCalls:    totalToolCalls,
 			}
@@ -100,6 +132,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 		}
 
 		// call LLM provider with current conversation
+		llmStart := time.Now()
 		resp, err := e.provider.Send(ctx, &LLMRequest{
 			MaxTokens: ResponseTokens,
 			System:    buildSystemPrompt(al),
@@ -108,18 +141,21 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 		})
 		if err != nil {
 			L.Error(ctx, err, "llm call failed")
+			dur := time.Since(start).Seconds()
+			e.hooks.complete(StatusFailed, dur, totalTokens, totalToolCalls)
 			return &RunResult{
 				Status:       StatusFailed,
 				Analysis:     fmt.Sprintf("LLM error: %v", err),
 				Conversation: conv,
 				CompletedAt:  time.Now(),
-				Duration:     time.Since(start).Seconds(),
+				Duration:     dur,
 				TokensUsed:   totalTokens,
 				ToolCalls:    totalToolCalls,
 			}
 		}
 
 		totalTokens += resp.Usage.InputTokens + resp.Usage.OutputTokens
+		e.hooks.llmCall(resp.Usage.InputTokens, resp.Usage.OutputTokens, time.Since(llmStart).Seconds())
 
 		L.Info(ctx, "llm response",
 			"stop_reason", resp.StopReason,
@@ -151,12 +187,14 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 					analysis = block.Text
 				}
 			}
+			dur := time.Since(start).Seconds()
+			e.hooks.complete(StatusComplete, dur, totalTokens, totalToolCalls)
 			return &RunResult{
 				Status:       StatusComplete,
 				Analysis:     analysis,
 				Conversation: conv,
 				CompletedAt:  time.Now(),
-				Duration:     time.Since(start).Seconds(),
+				Duration:     dur,
 				TokensUsed:   totalTokens,
 				ToolCalls:    totalToolCalls,
 			}
@@ -206,6 +244,7 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 
 		tool, ok := e.registry.Get(block.Name)
 		if !ok {
+			e.hooks.toolCall(block.Name, 0, len(block.Input), 0, true)
 			results = append(results, ContentBlock{
 				Type:      "tool_result",
 				ToolUseID: block.ID,
@@ -215,9 +254,12 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 			continue
 		}
 
+		toolStart := time.Now()
 		output, err := tool.Execute(ctx, block.Input)
+		toolDur := time.Since(toolStart).Seconds()
 		if err != nil {
 			logger.Error(ctx, err, "tool execution failed", "tool", block.Name)
+			e.hooks.toolCall(block.Name, toolDur, len(block.Input), 0, true)
 			results = append(results, ContentBlock{
 				Type:      "tool_result",
 				ToolUseID: block.ID,
@@ -227,6 +269,7 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 			continue
 		}
 
+		e.hooks.toolCall(block.Name, toolDur, len(block.Input), len(output), false)
 		results = append(results, ContentBlock{
 			Type:      "tool_result",
 			ToolUseID: block.ID,

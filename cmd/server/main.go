@@ -201,16 +201,17 @@ func run() error {
 	if appCfg.PrometheusEndpoint != "" {
 		prometheusQuery := tools.NewPrometheusQuery(appCfg.PrometheusEndpoint, appCfg.PrometheusTenantID)
 		registry.Register(prometheusQuery)
+		L.Info(ctx, "registered tool", "name", prometheusQuery.Name(), "endpoint", appCfg.PrometheusEndpoint)
 		prometheusQueryRange := tools.NewPrometheusQueryRange(appCfg.PrometheusEndpoint, appCfg.PrometheusTenantID)
 		registry.Register(prometheusQueryRange)
-		L.Info(ctx, "registered Prometheus tools", "endpoint", appCfg.PrometheusEndpoint)
+		L.Info(ctx, "registered tool", "name", prometheusQueryRange.Name(), "endpoint", appCfg.PrometheusEndpoint)
 	}
 
 	// Register Loki query tool if endpoint is configured, this allows the triage engine to query logs for alert investigation and correlation
 	if appCfg.LokiEndpoint != "" {
 		lokiQuery := tools.NewLokiQuery(appCfg.LokiEndpoint, appCfg.LokiTenantID)
 		registry.Register(lokiQuery)
-		L.Info(ctx, "registered Loki tool", "endpoint", appCfg.LokiEndpoint)
+		L.Info(ctx, "registered tool", "name", lokiQuery.Name(), "endpoint", appCfg.LokiEndpoint)
 	}
 
 	// Initialize the triage store
@@ -230,18 +231,22 @@ func run() error {
 
 	// Initialize Claude provider.
 	claudeProvider := claude.New(appCfg.ClaudeAPIKey, appCfg.ClaudeModel)
+	L.Info(ctx, "initialized LLM provider", "provider", "claude", "model", appCfg.ClaudeModel)
 	if claudeProvider == nil {
 		return fmt.Errorf("failed to initialize Claude provider")
 	}
 
+	// Initialize triage metrics on the shared Prometheus registry.
+	triageMetrics := triage.NewMetrics(m.Registry())
+
 	// Initialize the triage engine (pure - no store dependency).
-	claudeEngine := triage.NewEngine(claudeProvider, registry, L)
+	claudeEngine := triage.NewEngine(claudeProvider, registry, L, triageMetrics.Hooks())
 	if claudeEngine == nil {
 		return fmt.Errorf("failed to initialize triage engine for Claude provider")
 	}
 
 	// Initialize the triage service (owns dedup, lifecycle, async dispatch).
-	triageSvc := triage.NewService(triageStore, claudeEngine, L)
+	triageSvc := triage.NewService(triageStore, claudeEngine, L, triageMetrics)
 
 	// setup toggle for server shutdown. this is used to fail readiness checks
 	// during shutdown to drain connections from load balancer before killing the process.

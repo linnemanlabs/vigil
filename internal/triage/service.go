@@ -18,17 +18,19 @@ type SubmitResult struct {
 
 // Service is the business boundary for triage operations.
 type Service struct {
-	store  Store
-	engine *Engine
-	logger log.Logger
+	store   Store
+	engine  *Engine
+	logger  log.Logger
+	metrics *Metrics
 }
 
-// NewService creates a new triage service.
-func NewService(store Store, engine *Engine, logger log.Logger) *Service {
+// NewService creates a new triage service. Metrics may be nil.
+func NewService(store Store, engine *Engine, logger log.Logger, metrics *Metrics) *Service {
 	return &Service{
-		store:  store,
-		engine: engine,
-		logger: logger,
+		store:   store,
+		engine:  engine,
+		logger:  logger,
+		metrics: metrics,
 	}
 }
 
@@ -36,6 +38,7 @@ func NewService(store Store, engine *Engine, logger log.Logger) *Service {
 func (s *Service) Submit(ctx context.Context, al *alert.Alert) (*SubmitResult, error) {
 	// skip resolved alerts
 	if al.Status != "firing" {
+		s.incSubmit("skipped_not_firing")
 		return &SubmitResult{Skipped: true, Reason: "not firing"}, nil
 	}
 
@@ -43,6 +46,13 @@ func (s *Service) Submit(ctx context.Context, al *alert.Alert) (*SubmitResult, e
 	if existing, ok, err := s.store.GetByFingerprint(ctx, al.Fingerprint); err != nil {
 		return nil, err
 	} else if ok && (existing.Status == StatusPending || existing.Status == StatusInProgress) {
+		s.logger.Info(ctx, "triage skipped: active triage exists",
+			"fingerprint", al.Fingerprint,
+			"alert", al.Labels["alertname"],
+			"existing_id", existing.ID,
+			"existing_status", existing.Status,
+		)
+		s.incSubmit("skipped_duplicate")
 		return &SubmitResult{Skipped: true, Reason: "duplicate"}, nil
 	}
 
@@ -64,7 +74,14 @@ func (s *Service) Submit(ctx context.Context, al *alert.Alert) (*SubmitResult, e
 	// kick off async triage - pass only the ID to avoid sharing the Result pointer.
 	go s.runTriage(context.WithoutCancel(ctx), id, al)
 
+	s.incSubmit("accepted")
 	return &SubmitResult{ID: id}, nil
+}
+
+func (s *Service) incSubmit(result string) {
+	if s.metrics != nil {
+		s.metrics.SubmitsTotal.WithLabelValues(result).Inc()
+	}
 }
 
 // Get retrieves a triage result by ID.

@@ -79,7 +79,7 @@ func TestRun_SingleTurn(t *testing.T) {
 			Usage:      Usage{InputTokens: 100, OutputTokens: 50},
 		}},
 	}
-	engine := NewEngine(provider, registry, log.Nop())
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
 	rr := engine.Run(context.Background(), testAlert(), nil)
 
@@ -131,7 +131,7 @@ func TestRun_ToolUseLoop(t *testing.T) {
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop())
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
 	rr := engine.Run(context.Background(), testAlert(), nil)
 
@@ -174,7 +174,7 @@ func TestRun_UnknownTool(t *testing.T) {
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop())
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
 	rr := engine.Run(context.Background(), testAlert(), nil)
 
@@ -211,7 +211,7 @@ func TestRun_ToolExecutionError(t *testing.T) {
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop())
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
 	rr := engine.Run(context.Background(), testAlert(), nil)
 
@@ -230,7 +230,7 @@ func TestRun_LLMError(t *testing.T) {
 	provider := &mockProvider{
 		errs: []error{errors.New("api key expired")},
 	}
-	engine := NewEngine(provider, registry, log.Nop())
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
 	rr := engine.Run(context.Background(), testAlert(), nil)
 
@@ -264,7 +264,7 @@ func TestRun_MaxToolRoundsLimit(t *testing.T) {
 	}
 
 	provider := &mockProvider{responses: responses}
-	engine := NewEngine(provider, registry, log.Nop())
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
 	rr := engine.Run(context.Background(), testAlert(), nil)
 
@@ -307,7 +307,7 @@ func TestRun_MaxTokensLimit(t *testing.T) {
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop())
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
 	rr := engine.Run(context.Background(), testAlert(), nil)
 
@@ -369,7 +369,7 @@ func TestRun_ObserverCalledPerTurn(t *testing.T) {
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop())
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
 	type observed struct {
 		seq  int
@@ -432,7 +432,7 @@ func TestRun_ObserverErrorDoesNotAbort(t *testing.T) {
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop())
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
 	cb := func(_ context.Context, _ int, _ *Turn) error {
 		return errors.New("callback boom")
@@ -445,5 +445,102 @@ func TestRun_ObserverErrorDoesNotAbort(t *testing.T) {
 	}
 	if rr.Analysis != "completed" {
 		t.Errorf("analysis = %q, want %q", rr.Analysis, "completed")
+	}
+}
+
+func TestRun_HooksCalled(t *testing.T) {
+	t.Parallel()
+
+	registry := tools.NewRegistry()
+	registry.Register(&mockTool{
+		name:   "hook_tool",
+		output: json.RawMessage(`{"result":"ok"}`),
+	})
+
+	provider := &mockProvider{
+		responses: []*LLMResponse{
+			{
+				Content: []ContentBlock{
+					{Type: "tool_use", ID: "c-1", Name: "hook_tool", Input: json.RawMessage(`{"q":"x"}`)},
+				},
+				StopReason: StopToolUse,
+				Usage:      Usage{InputTokens: 100, OutputTokens: 50},
+			},
+			{
+				Content:    []ContentBlock{{Type: "text", Text: "done"}},
+				StopReason: StopEnd,
+				Usage:      Usage{InputTokens: 200, OutputTokens: 80},
+			},
+		},
+	}
+
+	var (
+		mu            sync.Mutex
+		llmCalls      int
+		totalTokensIn int
+		totalTokensOut int
+		toolCalls     int
+		lastToolName  string
+		lastToolErr   bool
+		completeCalls int
+		completeStatus Status
+	)
+
+	hooks := EngineHooks{
+		OnLLMCall: func(in, out int, _ float64) {
+			mu.Lock()
+			defer mu.Unlock()
+			llmCalls++
+			totalTokensIn += in
+			totalTokensOut += out
+		},
+		OnToolCall: func(name string, _ float64, _, _ int, isErr bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			toolCalls++
+			lastToolName = name
+			lastToolErr = isErr
+		},
+		OnComplete: func(status Status, _ float64, _, _ int) {
+			mu.Lock()
+			defer mu.Unlock()
+			completeCalls++
+			completeStatus = status
+		},
+	}
+
+	engine := NewEngine(provider, registry, log.Nop(), hooks)
+	rr := engine.Run(context.Background(), testAlert(), nil)
+
+	if rr.Status != StatusComplete {
+		t.Fatalf("status = %q, want %q", rr.Status, StatusComplete)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if llmCalls != 2 {
+		t.Errorf("llm hook calls = %d, want 2", llmCalls)
+	}
+	if totalTokensIn != 300 {
+		t.Errorf("total tokens in = %d, want 300", totalTokensIn)
+	}
+	if totalTokensOut != 130 {
+		t.Errorf("total tokens out = %d, want 130", totalTokensOut)
+	}
+	if toolCalls != 1 {
+		t.Errorf("tool hook calls = %d, want 1", toolCalls)
+	}
+	if lastToolName != "hook_tool" {
+		t.Errorf("last tool name = %q, want %q", lastToolName, "hook_tool")
+	}
+	if lastToolErr {
+		t.Error("expected tool error = false")
+	}
+	if completeCalls != 1 {
+		t.Errorf("complete hook calls = %d, want 1", completeCalls)
+	}
+	if completeStatus != StatusComplete {
+		t.Errorf("complete status = %q, want %q", completeStatus, StatusComplete)
 	}
 }
