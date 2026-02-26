@@ -38,7 +38,13 @@ an alert, and finding relevant log lines that explain the root cause.
 Common label selectors: {node="hostname"}, {job="systemd-journal"}, {service_name="myservice"}
 You can add line filters: {node="hostname"} |= "error" or {node="hostname"} |~ "OOM|killed"
 Use limit parameter to control how many log lines are returned.
-Maximum query range is 6 hours. For longer investigations, make multiple queries with different time windows.`
+Maximum query range is 6 hours. For longer investigations, make multiple queries with different time windows.
+
+Prefer exact string matches (|= "exact") over regex (|~) when possible, as regex is much slower.
+Avoid short common substrings in regex alternations (e.g. "log", "tmp", "clean") as they match too broadly and cause timeouts.
+Use specific terms: |= "logrotate" is fast, |~ "log|tmp|clean" is slow.
+When searching for multiple terms, prefer multiple sequential queries with |= over one regex with many alternations.
+`
 }
 
 func (l *LokiQuery) Parameters() json.RawMessage {
