@@ -37,7 +37,8 @@ an alert, and finding relevant log lines that explain the root cause.
 
 Common label selectors: {node="hostname"}, {job="systemd-journal"}, {service_name="myservice"}
 You can add line filters: {node="hostname"} |= "error" or {node="hostname"} |~ "OOM|killed"
-Use limit parameter to control how many log lines are returned.`
+Use limit parameter to control how many log lines are returned.
+Maximum query range is 6 hours. For longer investigations, make multiple queries with different time windows.`
 }
 
 func (l *LokiQuery) Parameters() json.RawMessage {
@@ -93,6 +94,14 @@ func (l *LokiQuery) Execute(ctx context.Context, params json.RawMessage) (json.R
 	}
 	if input.End == "" {
 		input.End = now.Format(time.RFC3339Nano)
+	}
+
+	// Cap the query range to 6 hours to prevent excessively large queries.
+	startTime, _ := time.Parse(time.RFC3339, input.Start)
+	endTime, _ := time.Parse(time.RFC3339, input.End)
+	if endTime.Sub(startTime) > 6*time.Hour {
+		startTime = endTime.Add(-6 * time.Hour)
+		input.Start = startTime.Format(time.RFC3339Nano)
 	}
 
 	u, err := url.Parse(l.endpoint)
