@@ -34,6 +34,7 @@ import (
 	"github.com/linnemanlabs/vigil/internal/alertapi"
 	vc "github.com/linnemanlabs/vigil/internal/cfg"
 	"github.com/linnemanlabs/vigil/internal/llm/claude"
+	"github.com/linnemanlabs/vigil/internal/notify/slack"
 	"github.com/linnemanlabs/vigil/internal/tools"
 	"github.com/linnemanlabs/vigil/internal/triage"
 	"github.com/linnemanlabs/vigil/internal/triage/memstore"
@@ -245,8 +246,15 @@ func run() error {
 		return fmt.Errorf("failed to initialize triage engine for Claude provider")
 	}
 
+	// Initialize Slack notifier for triage result notifications.
+	var notifier triage.Notifier
+	if appCfg.SlackWebhookURL != "" {
+		notifier = slack.New(appCfg.SlackWebhookURL, L)
+		L.Info(ctx, "slack notifications enabled")
+	}
+
 	// Initialize the triage service (owns dedup, lifecycle, async dispatch).
-	triageSvc := triage.NewService(triageStore, claudeEngine, L, triageMetrics)
+	triageSvc := triage.NewService(triageStore, claudeEngine, L, triageMetrics, notifier)
 
 	// setup toggle for server shutdown. this is used to fail readiness checks
 	// during shutdown to drain connections from load balancer before killing the process.

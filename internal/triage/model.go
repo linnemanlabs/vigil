@@ -28,7 +28,7 @@ type Result struct {
 	Severity     string        `json:"severity"`
 	Summary      string        `json:"summary"`
 	Analysis     string        `json:"analysis,omitempty"`
-	Actions      []string      `json:"actions,omitempty"`
+	ToolsUsed    []string      `json:"tools_used,omitempty"`
 	Conversation *Conversation `json:"conversation,omitempty"`
 	CreatedAt    time.Time     `json:"created_at"`
 	CompletedAt  time.Time     `json:"completed_at,omitempty"`

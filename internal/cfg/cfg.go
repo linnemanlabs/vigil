@@ -19,6 +19,7 @@ type Config struct {
 	ClaudeAPIKey          string
 	ClaudeModel           string
 	DatabaseURL           string
+	SlackWebhookURL       string
 }
 
 // RegisterFlags binds Config fields to the given FlagSet with defaults inline
@@ -33,6 +34,7 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.DatabaseURL, "database-url", "", "PostgreSQL connection URL (empty = in-memory store)")
 	fs.StringVar(&c.LokiEndpoint, "loki-endpoint", "", "Loki endpoint for log collection by tool use")
 	fs.StringVar(&c.LokiTenantID, "loki-tenant-id", "", "Loki tenant ID for multi-tenant setups")
+	fs.StringVar(&c.SlackWebhookURL, "slack-webhook-url", "", "Slack webhook URL for notifications")
 }
 
 // Validate checks all configuration fields for correctness.
