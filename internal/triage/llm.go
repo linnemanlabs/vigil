@@ -52,6 +52,7 @@ type ContentBlock struct {
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   string          `json:"content,omitempty"`
 	IsError   bool            `json:"is_error,omitempty"`
+	Duration  float64         `json:"-"`
 }
 
 type Usage struct {

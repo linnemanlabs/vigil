@@ -292,17 +292,19 @@ func (s *Store) insertToolCalls(ctx context.Context, tx pgx.Tx, triageID string,
 		var output json.RawMessage
 		var outputBytes int
 		var isError bool
+		var duration float64
 
 		if result, ok := toolResults[block.ID]; ok {
 			output, _ = json.Marshal(result.Content)
 			outputBytes = len(output)
 			isError = result.IsError
+			duration = result.Duration
 		}
 
 		_, err := tx.Exec(ctx,
-			`INSERT INTO tool_calls (triage_id, message_id, message_seq, tool_name, input, output, input_bytes, output_bytes, is_error, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			triageID, messageID, seq, block.Name, block.Input, output, inputBytes, outputBytes, isError, turn.Timestamp,
+			`INSERT INTO tool_calls (triage_id, message_id, message_seq, tool_name, input, output, input_bytes, output_bytes, is_error, duration_s, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			triageID, messageID, seq, block.Name, block.Input, output, inputBytes, outputBytes, isError, duration, turn.Timestamp,
 		)
 		if err != nil {
 			return fmt.Errorf("insert tool_call %s seq %d: %w", block.Name, seq, err)

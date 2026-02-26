@@ -352,6 +352,7 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 				ToolUseID: block.ID,
 				Content:   fmt.Sprintf("tool error: %v", err),
 				IsError:   true,
+				Duration:  toolDur,
 			})
 			continue
 		}
@@ -367,6 +368,7 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 			Type:      "tool_result",
 			ToolUseID: block.ID,
 			Content:   string(output),
+			Duration:  toolDur,
 		})
 	}
 	return results, calls
