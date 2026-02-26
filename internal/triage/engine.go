@@ -6,10 +6,17 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/linnemanlabs/go-core/log"
 	"github.com/linnemanlabs/vigil/internal/alert"
 	"github.com/linnemanlabs/vigil/internal/tools"
 )
+
+var tracer = otel.Tracer("github.com/linnemanlabs/vigil/internal/triage")
 
 const (
 	MaxToolRounds  = 15
@@ -19,16 +26,18 @@ const (
 
 // RunResult is the outcome of a single Engine.Run invocation.
 type RunResult struct {
-	Status       Status
-	Analysis     string
-	Actions      []string
-	Conversation *Conversation
-	CompletedAt  time.Time
-	Duration     float64
-	TokensUsed   int
-	ToolCalls    int
-	SystemPrompt string
-	Model        string
+	Status           Status
+	Analysis         string
+	Actions          []string
+	Conversation     *Conversation
+	CompletedAt      time.Time
+	Duration         float64
+	TokensUsed       int
+	InputTokensUsed  int
+	OutputTokensUsed int
+	ToolCalls        int
+	SystemPrompt     string
+	Model            string
 }
 
 // EngineHooks provides optional callbacks for instrumenting engine operations.
@@ -95,7 +104,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 	}
 
 	conv := &Conversation{}
-	var totalTokens int
+	var totalInputTokens, totalOutputTokens int
 	var totalToolCalls int
 	var lastModel string
 
@@ -105,33 +114,37 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 		if totalToolCalls >= MaxToolRounds {
 			L.Warn(ctx, "triage hit tool call limit", "limit", MaxToolRounds)
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(StatusComplete, dur, totalTokens, totalToolCalls)
+			e.hooks.complete(StatusComplete, dur, totalInputTokens+totalOutputTokens, totalToolCalls)
 			return &RunResult{
-				Status:       StatusComplete,
-				Analysis:     "Triage terminated: tool call budget exhausted",
-				Conversation: conv,
-				CompletedAt:  time.Now(),
-				Duration:     dur,
-				TokensUsed:   totalTokens,
-				ToolCalls:    totalToolCalls,
-				SystemPrompt: systemPrompt,
-				Model:        lastModel,
+				Status:           StatusComplete,
+				Analysis:         "Triage terminated: tool call budget exhausted",
+				Conversation:     conv,
+				CompletedAt:      time.Now(),
+				Duration:         dur,
+				TokensUsed:       totalInputTokens + totalOutputTokens,
+				InputTokensUsed:  totalInputTokens,
+				OutputTokensUsed: totalOutputTokens,
+				ToolCalls:        totalToolCalls,
+				SystemPrompt:     systemPrompt,
+				Model:            lastModel,
 			}
 		}
-		if totalTokens >= MaxTokens {
+		if totalInputTokens+totalOutputTokens >= MaxTokens {
 			L.Warn(ctx, "triage hit token limit", "limit", MaxTokens)
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(StatusComplete, dur, totalTokens, totalToolCalls)
+			e.hooks.complete(StatusComplete, dur, totalInputTokens+totalOutputTokens, totalToolCalls)
 			return &RunResult{
-				Status:       StatusComplete,
-				Analysis:     "Triage terminated: token budget exhausted",
-				Conversation: conv,
-				CompletedAt:  time.Now(),
-				Duration:     dur,
-				TokensUsed:   totalTokens,
-				ToolCalls:    totalToolCalls,
-				SystemPrompt: systemPrompt,
-				Model:        lastModel,
+				Status:           StatusComplete,
+				Analysis:         "Triage terminated: token budget exhausted",
+				Conversation:     conv,
+				CompletedAt:      time.Now(),
+				Duration:         dur,
+				TokensUsed:       totalInputTokens + totalOutputTokens,
+				InputTokensUsed:  totalInputTokens,
+				OutputTokensUsed: totalOutputTokens,
+				ToolCalls:        totalToolCalls,
+				SystemPrompt:     systemPrompt,
+				Model:            lastModel,
 			}
 		}
 
@@ -142,6 +155,11 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 
 		// call LLM provider with current conversation
 		llmStart := time.Now()
+		ctx, llmSpan := tracer.Start(ctx, "chat", trace.WithAttributes(
+			attribute.String("gen_ai.operation.name", "chat"),
+			attribute.String("gen_ai.provider.name", "anthropic"),
+			attribute.Int("gen_ai.request.max_tokens", ResponseTokens),
+		))
 		resp, err := e.provider.Send(ctx, &LLMRequest{
 			MaxTokens: ResponseTokens,
 			System:    systemPrompt,
@@ -149,32 +167,47 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 			Tools:     toolDefs,
 		})
 		if err != nil {
+			llmSpan.RecordError(err)
+			llmSpan.SetStatus(codes.Error, err.Error())
+			llmSpan.End()
 			L.Error(ctx, err, "llm call failed")
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(StatusFailed, dur, totalTokens, totalToolCalls)
+			e.hooks.complete(StatusFailed, dur, totalInputTokens+totalOutputTokens, totalToolCalls)
 			return &RunResult{
-				Status:       StatusFailed,
-				Analysis:     fmt.Sprintf("LLM error: %v", err),
-				Conversation: conv,
-				CompletedAt:  time.Now(),
-				Duration:     dur,
-				TokensUsed:   totalTokens,
-				ToolCalls:    totalToolCalls,
-				SystemPrompt: systemPrompt,
-				Model:        lastModel,
+				Status:           StatusFailed,
+				Analysis:         fmt.Sprintf("LLM error: %v", err),
+				Conversation:     conv,
+				CompletedAt:      time.Now(),
+				Duration:         dur,
+				TokensUsed:       totalInputTokens + totalOutputTokens,
+				InputTokensUsed:  totalInputTokens,
+				OutputTokensUsed: totalOutputTokens,
+				ToolCalls:        totalToolCalls,
+				SystemPrompt:     systemPrompt,
+				Model:            lastModel,
 			}
 		}
 
 		llmDur := time.Since(llmStart).Seconds()
-		totalTokens += resp.Usage.InputTokens + resp.Usage.OutputTokens
+		totalInputTokens += resp.Usage.InputTokens
+		totalOutputTokens += resp.Usage.OutputTokens
 		lastModel = resp.Model
 		e.hooks.llmCall(resp.Usage.InputTokens, resp.Usage.OutputTokens, llmDur)
+
+		llmSpan.SetAttributes(
+			attribute.String("gen_ai.response.model", resp.Model),
+			attribute.String("gen_ai.request.model", resp.Model),
+			attribute.Int("gen_ai.usage.input_tokens", resp.Usage.InputTokens),
+			attribute.Int("gen_ai.usage.output_tokens", resp.Usage.OutputTokens),
+			attribute.StringSlice("gen_ai.response.finish_reasons", []string{string(resp.StopReason)}),
+		)
+		llmSpan.End()
 
 		L.Info(ctx, "llm response",
 			"stop_reason", resp.StopReason,
 			"input_tokens", resp.Usage.InputTokens,
 			"output_tokens", resp.Usage.OutputTokens,
-			"total_tokens", totalTokens,
+			"total_tokens", totalInputTokens+totalOutputTokens,
 		)
 
 		// record assistant turn
@@ -204,17 +237,19 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 				}
 			}
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(StatusComplete, dur, totalTokens, totalToolCalls)
+			e.hooks.complete(StatusComplete, dur, totalInputTokens+totalOutputTokens, totalToolCalls)
 			return &RunResult{
-				Status:       StatusComplete,
-				Analysis:     analysis,
-				Conversation: conv,
-				CompletedAt:  time.Now(),
-				Duration:     dur,
-				TokensUsed:   totalTokens,
-				ToolCalls:    totalToolCalls,
-				SystemPrompt: systemPrompt,
-				Model:        lastModel,
+				Status:           StatusComplete,
+				Analysis:         analysis,
+				Conversation:     conv,
+				CompletedAt:      time.Now(),
+				Duration:         dur,
+				TokensUsed:       totalInputTokens + totalOutputTokens,
+				InputTokensUsed:  totalInputTokens,
+				OutputTokensUsed: totalOutputTokens,
+				ToolCalls:        totalToolCalls,
+				SystemPrompt:     systemPrompt,
+				Model:            lastModel,
 			}
 		}
 
@@ -262,6 +297,15 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 
 		tool, ok := e.registry.Get(block.Name)
 		if !ok {
+			_, toolSpan := tracer.Start(ctx, "execute_tool", trace.WithAttributes(
+				attribute.String("gen_ai.operation.name", "execute_tool"),
+				attribute.String("gen_ai.tool.name", block.Name),
+				attribute.String("gen_ai.tool.call.id", block.ID),
+				attribute.Bool("vigil.tool.is_error", true),
+			))
+			toolSpan.SetStatus(codes.Error, "unknown tool")
+			toolSpan.End()
+
 			e.hooks.toolCall(block.Name, 0, len(block.Input), 0, true)
 			results = append(results, ContentBlock{
 				Type:      "tool_result",
@@ -272,11 +316,29 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 			continue
 		}
 
+		toolCtx, toolSpan := tracer.Start(ctx, "execute_tool", trace.WithAttributes(
+			attribute.String("gen_ai.operation.name", "execute_tool"),
+			attribute.String("gen_ai.tool.name", block.Name),
+			attribute.String("gen_ai.tool.call.id", block.ID),
+			attribute.Int("vigil.tool.input_bytes", len(block.Input)),
+		))
+
 		toolStart := time.Now()
-		output, err := tool.Execute(ctx, block.Input)
+		output, err := tool.Execute(toolCtx, block.Input)
 		toolDur := time.Since(toolStart).Seconds()
+
+		toolSpan.SetAttributes(attribute.Float64("vigil.tool.duration_s", toolDur))
+
 		if err != nil {
 			logger.Error(ctx, err, "tool execution failed", "tool", block.Name)
+			toolSpan.SetAttributes(
+				attribute.Int("vigil.tool.output_bytes", 0),
+				attribute.Bool("vigil.tool.is_error", true),
+			)
+			toolSpan.RecordError(err)
+			toolSpan.SetStatus(codes.Error, err.Error())
+			toolSpan.End()
+
 			e.hooks.toolCall(block.Name, toolDur, len(block.Input), 0, true)
 			results = append(results, ContentBlock{
 				Type:      "tool_result",
@@ -286,6 +348,12 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 			})
 			continue
 		}
+
+		toolSpan.SetAttributes(
+			attribute.Int("vigil.tool.output_bytes", len(output)),
+			attribute.Bool("vigil.tool.is_error", false),
+		)
+		toolSpan.End()
 
 		e.hooks.toolCall(block.Name, toolDur, len(block.Input), len(output), false)
 		results = append(results, ContentBlock{

@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/linnemanlabs/go-core/log"
 	"github.com/linnemanlabs/go-core/xerrors"
@@ -49,6 +52,9 @@ func (a *API) RegisterRoutes(r chi.Router) {
 func (a *API) handleGetTriage(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
+	span := trace.SpanFromContext(r.Context())
+	span.SetAttributes(attribute.String("vigil.triage.id", id))
+
 	result, ok, err := a.svc.Get(r.Context(), id)
 	if err != nil {
 		a.logger.Error(r.Context(), err, "failed to get triage result", "id", id)
@@ -59,6 +65,8 @@ func (a *API) handleGetTriage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 		return
 	}
+
+	span.SetAttributes(attribute.String("vigil.triage.status", string(result.Status)))
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)

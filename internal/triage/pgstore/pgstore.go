@@ -9,11 +9,18 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/linnemanlabs/vigil/internal/triage"
 )
+
+var tracer = otel.Tracer("github.com/linnemanlabs/vigil/internal/triage/pgstore")
 
 //go:embed schema.sql
 var schema string
@@ -52,10 +59,20 @@ const triageColumns = `id, fingerprint, status, alert_name, severity, summary, a
 	actions, created_at, completed_at, duration_s, tokens_used, tool_calls, system_prompt, model`
 
 // Get retrieves a triage result by ID.
+//
+//nolint:dupl // similar structure to GetByFingerprint is intentional
 func (s *Store) Get(ctx context.Context, id string) (*triage.Result, bool, error) {
+	ctx, span := tracer.Start(ctx, "pgstore.Get", trace.WithAttributes(
+		attribute.String("db.system", "postgresql"),
+		attribute.String("db.operation.name", "SELECT"),
+	))
+	defer span.End()
+
 	query := `SELECT ` + triageColumns + ` FROM triage_runs WHERE id = $1`
 	r, err := s.scanTriageRow(s.pool.QueryRow(ctx, query, id))
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, false, err
 	}
 	if r == nil {
@@ -63,6 +80,8 @@ func (s *Store) Get(ctx context.Context, id string) (*triage.Result, bool, error
 	}
 
 	if err := s.loadConversation(ctx, r); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, false, err
 	}
 
@@ -70,10 +89,20 @@ func (s *Store) Get(ctx context.Context, id string) (*triage.Result, bool, error
 }
 
 // GetByFingerprint retrieves the most recent triage result for a fingerprint.
+//
+//nolint:dupl // similar structure to Get is intentional
 func (s *Store) GetByFingerprint(ctx context.Context, fingerprint string) (*triage.Result, bool, error) {
+	ctx, span := tracer.Start(ctx, "pgstore.GetByFingerprint", trace.WithAttributes(
+		attribute.String("db.system", "postgresql"),
+		attribute.String("db.operation.name", "SELECT"),
+	))
+	defer span.End()
+
 	query := `SELECT ` + triageColumns + ` FROM triage_runs WHERE fingerprint = $1 ORDER BY created_at DESC LIMIT 1`
 	r, err := s.scanTriageRow(s.pool.QueryRow(ctx, query, fingerprint))
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, false, err
 	}
 	if r == nil {
@@ -81,6 +110,8 @@ func (s *Store) GetByFingerprint(ctx context.Context, fingerprint string) (*tria
 	}
 
 	if err := s.loadConversation(ctx, r); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return nil, false, err
 	}
 
@@ -89,17 +120,29 @@ func (s *Store) GetByFingerprint(ctx context.Context, fingerprint string) (*tria
 
 // Put inserts or updates a triage result (upsert on triage_runs only).
 func (s *Store) Put(ctx context.Context, r *triage.Result) error {
+	ctx, span := tracer.Start(ctx, "pgstore.Put", trace.WithAttributes(
+		attribute.String("db.system", "postgresql"),
+		attribute.String("db.operation.name", "UPSERT"),
+	))
+	defer span.End()
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is harmless
 
 	if err := s.upsertTriage(ctx, tx, r); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
@@ -107,18 +150,30 @@ func (s *Store) Put(ctx context.Context, r *triage.Result) error {
 
 // AppendTurn inserts a single message row and returns its database ID.
 func (s *Store) AppendTurn(ctx context.Context, triageID string, seq int, turn *triage.Turn) (int, error) {
+	ctx, span := tracer.Start(ctx, "pgstore.AppendTurn", trace.WithAttributes(
+		attribute.String("db.system", "postgresql"),
+		attribute.String("db.operation.name", "INSERT"),
+	))
+	defer span.End()
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return 0, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is harmless
 
 	msgID, err := s.insertMessage(ctx, tx, triageID, seq, turn)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return 0, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return 0, fmt.Errorf("commit: %w", err)
 	}
 	return msgID, nil
@@ -127,17 +182,29 @@ func (s *Store) AppendTurn(ctx context.Context, triageID string, seq int, turn *
 // AppendToolCalls inserts tool_call rows for an assistant turn, matched
 // against the tool results from the following user turn.
 func (s *Store) AppendToolCalls(ctx context.Context, triageID string, messageID, messageSeq int, turn *triage.Turn, toolResults map[string]*triage.ContentBlock) error {
+	ctx, span := tracer.Start(ctx, "pgstore.AppendToolCalls", trace.WithAttributes(
+		attribute.String("db.system", "postgresql"),
+		attribute.String("db.operation.name", "INSERT"),
+	))
+	defer span.End()
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // rollback after commit is harmless
 
 	if err := s.insertToolCalls(ctx, tx, triageID, messageID, messageSeq, turn, toolResults); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("commit: %w", err)
 	}
 	return nil

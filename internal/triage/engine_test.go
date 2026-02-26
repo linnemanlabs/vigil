@@ -8,6 +8,10 @@ import (
 	"sync"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"github.com/linnemanlabs/go-core/log"
 	"github.com/linnemanlabs/vigil/internal/alert"
 	"github.com/linnemanlabs/vigil/internal/tools"
@@ -559,5 +563,111 @@ func TestRun_HooksCalled(t *testing.T) {
 	}
 	if completeStatus != StatusComplete {
 		t.Errorf("complete status = %q, want %q", completeStatus, StatusComplete)
+	}
+}
+
+func TestRun_CreatesSpans(t *testing.T) {
+	// Not parallel: swaps the global OTel tracer provider.
+
+	exporter := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer otel.SetTracerProvider(prev)
+
+	registry := tools.NewRegistry()
+	registry.Register(&mockTool{
+		name:   "span_tool",
+		output: json.RawMessage(`{"ok":true}`),
+	})
+
+	provider := &mockProvider{
+		responses: []*LLMResponse{
+			{
+				Content: []ContentBlock{
+					{Type: "tool_use", ID: "c-1", Name: "span_tool", Input: json.RawMessage(`{"q":"x"}`)},
+				},
+				StopReason: StopToolUse,
+				Usage:      Usage{InputTokens: 100, OutputTokens: 50},
+				Model:      "claude-sonnet-4-20250514",
+			},
+			{
+				Content:    []ContentBlock{{Type: "text", Text: "done"}},
+				StopReason: StopEnd,
+				Usage:      Usage{InputTokens: 200, OutputTokens: 80},
+				Model:      "claude-sonnet-4-20250514",
+			},
+		},
+	}
+
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	rr := engine.Run(context.Background(), testAlert(), nil)
+
+	if rr.Status != StatusComplete {
+		t.Fatalf("status = %q, want %q", rr.Status, StatusComplete)
+	}
+
+	spans := exporter.GetSpans()
+
+	// Count spans by name.
+	counts := make(map[string]int)
+	for _, s := range spans {
+		counts[s.Name]++
+	}
+
+	if counts["chat"] != 2 {
+		t.Errorf("chat spans = %d, want 2", counts["chat"])
+	}
+	if counts["execute_tool"] != 1 {
+		t.Errorf("execute_tool spans = %d, want 1", counts["execute_tool"])
+	}
+
+	// Verify key attributes on the first chat span.
+	for _, s := range spans {
+		if s.Name != "chat" {
+			continue
+		}
+		attrs := make(map[string]any)
+		for _, a := range s.Attributes {
+			attrs[string(a.Key)] = a.Value.AsInterface()
+		}
+		if v, ok := attrs["gen_ai.operation.name"]; !ok || v != "chat" {
+			t.Errorf("chat span missing gen_ai.operation.name=chat, got %v", v)
+		}
+		if v, ok := attrs["gen_ai.response.model"]; !ok || v != "claude-sonnet-4-20250514" {
+			t.Errorf("chat span missing gen_ai.response.model, got %v", v)
+		}
+		break
+	}
+
+	// Verify tool span attributes.
+	for _, s := range spans {
+		if s.Name != "execute_tool" {
+			continue
+		}
+		attrs := make(map[string]any)
+		for _, a := range s.Attributes {
+			attrs[string(a.Key)] = a.Value.AsInterface()
+		}
+		if v, ok := attrs["gen_ai.tool.name"]; !ok || v != "span_tool" {
+			t.Errorf("tool span missing gen_ai.tool.name=span_tool, got %v", v)
+		}
+		if v, ok := attrs["vigil.tool.is_error"]; !ok || v != false {
+			t.Errorf("tool span vigil.tool.is_error = %v, want false", v)
+		}
+		break
+	}
+
+	// Verify split token tracking.
+	if rr.InputTokensUsed != 300 {
+		t.Errorf("InputTokensUsed = %d, want 300", rr.InputTokensUsed)
+	}
+	if rr.OutputTokensUsed != 130 {
+		t.Errorf("OutputTokensUsed = %d, want 130", rr.OutputTokensUsed)
+	}
+	if rr.TokensUsed != 430 {
+		t.Errorf("TokensUsed = %d, want 430", rr.TokensUsed)
 	}
 }

@@ -6,6 +6,9 @@ import (
 	"io"
 	"net/http"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/linnemanlabs/vigil/internal/alert"
 )
 
@@ -33,6 +36,12 @@ func (a *API) handleIngestAlert(w http.ResponseWriter, r *http.Request) {
 		}
 		accepted = append(accepted, sr.ID)
 	}
+
+	span := trace.SpanFromContext(r.Context())
+	span.SetAttributes(
+		attribute.Int("vigil.alerts.count", len(wh.Alerts)),
+		attribute.Int("vigil.alerts.accepted", len(accepted)),
+	)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

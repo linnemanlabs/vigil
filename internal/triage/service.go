@@ -4,6 +4,10 @@ import (
 	"context"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/linnemanlabs/go-core/log"
 	"github.com/linnemanlabs/vigil/internal/alert"
 	"github.com/oklog/ulid/v2"
@@ -35,6 +39,8 @@ func NewService(store Store, engine *Engine, logger log.Logger, metrics *Metrics
 }
 
 // Submit accepts an alert for triage, handling dedup and lifecycle.
+//
+//nolint:spancheck // triageSpan is ended in the runTriage goroutine via defer
 func (s *Service) Submit(ctx context.Context, al *alert.Alert) (*SubmitResult, error) {
 	// skip resolved alerts
 	if al.Status != "firing" {
@@ -71,8 +77,26 @@ func (s *Service) Submit(ctx context.Context, al *alert.Alert) (*SubmitResult, e
 		return nil, err
 	}
 
-	// kick off async triage - pass only the ID to avoid sharing the Result pointer.
-	go s.runTriage(context.WithoutCancel(ctx), id, al)
+	// Start a new root span for the triage, linked back to the HTTP request span.
+	// The span is ended in runTriage via defer; spancheck can't see across goroutines.
+	httpSpanCtx := trace.SpanFromContext(ctx).SpanContext()
+	triageCtx, triageSpan := tracer.Start(
+		context.WithoutCancel(ctx),
+		"triage",
+		trace.WithNewRoot(),
+		trace.WithLinks(trace.Link{SpanContext: httpSpanCtx}),
+		trace.WithAttributes(
+			attribute.String("gen_ai.operation.name", "invoke_agent"),
+			attribute.String("gen_ai.provider.name", "anthropic"),
+			attribute.String("gen_ai.agent.name", "vigil"),
+			attribute.String("vigil.triage.id", id),
+			attribute.String("vigil.alert.name", al.Labels["alertname"]),
+			attribute.String("vigil.alert.fingerprint", al.Fingerprint),
+			attribute.String("vigil.triage.severity", al.Labels["severity"]),
+		),
+	)
+
+	go s.runTriage(triageCtx, id, al, triageSpan)
 
 	s.incSubmit("accepted")
 	return &SubmitResult{ID: id}, nil
@@ -89,18 +113,24 @@ func (s *Service) Get(ctx context.Context, id string) (*Result, bool, error) {
 	return s.store.Get(ctx, id)
 }
 
-func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert) {
+func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, triageSpan trace.Span) {
+	defer triageSpan.End()
+
 	L := s.logger.With("triage_id", id, "alert", al.Labels["alertname"])
 
 	result, ok, err := s.store.Get(ctx, id)
 	if err != nil || !ok {
 		L.Error(ctx, err, "failed to fetch result for triage")
+		triageSpan.RecordError(err)
+		triageSpan.SetStatus(codes.Error, "failed to fetch result")
 		return
 	}
 
 	result.Status = StatusInProgress
 	if err := s.store.Put(ctx, result); err != nil {
 		L.Error(ctx, err, "failed to update status to in_progress")
+		triageSpan.RecordError(err)
+		triageSpan.SetStatus(codes.Error, "failed to update status")
 		return
 	}
 
@@ -118,6 +148,17 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert) {
 
 	if err := s.store.Put(ctx, result); err != nil {
 		L.Error(ctx, err, "failed to persist triage result")
+	}
+
+	triageSpan.SetAttributes(
+		attribute.String("gen_ai.response.model", rr.Model),
+		attribute.Int("gen_ai.usage.input_tokens", rr.InputTokensUsed),
+		attribute.Int("gen_ai.usage.output_tokens", rr.OutputTokensUsed),
+		attribute.String("vigil.triage.status", string(rr.Status)),
+		attribute.Int("vigil.triage.tool_calls", rr.ToolCalls),
+	)
+	if rr.Status == StatusFailed {
+		triageSpan.SetStatus(codes.Error, rr.Analysis)
 	}
 
 	L.Info(ctx, "triage complete",
