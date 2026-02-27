@@ -23,8 +23,11 @@ const (
 	// MaxToolRounds is the maximum number of tool calls allowed in a single triage before we abort to prevent infinite loops.
 	MaxToolRounds = 15
 
-	// MaxTokens is the maximum total input+output tokens allowed in a single triage before we abort to prevent runaway costs.
-	MaxTokens = 100000
+	// MaxInputTokens is the maximum input tokens allowed in a single triage before we abort to prevent runaway costs.
+	MaxInputTokens = 200000
+
+	// MaxOutputTokens is the maximum output tokens allowed in a single triage before we abort to prevent runaway costs.
+	MaxOutputTokens = 50000
 
 	// ResponseTokens is the max tokens we request from the LLM in a single response. this is separate from MaxTokens which is a global limit across all turns.
 	ResponseTokens = 4096
@@ -135,52 +138,41 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 
 	systemPrompt := buildSystemPrompt(al)
 
+	budgetResult := func(analysis string) *RunResult {
+		dur := time.Since(start).Seconds()
+		e.hooks.complete(&CompleteEvent{
+			Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
+			TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
+		})
+		return &RunResult{
+			Status:           StatusComplete,
+			Analysis:         analysis,
+			ToolsUsed:        sortedKeys(toolsUsedSet),
+			Conversation:     conv,
+			CompletedAt:      time.Now(),
+			Duration:         dur,
+			LLMTime:          totalLLMTime,
+			ToolTime:         totalToolTime,
+			InputTokensUsed:  totalInputTokens,
+			OutputTokensUsed: totalOutputTokens,
+			ToolCalls:        totalToolCalls,
+			SystemPrompt:     systemPrompt,
+			Model:            lastModel,
+		}
+	}
+
 	for {
 		if totalToolCalls >= MaxToolRounds {
 			L.Warn(ctx, "triage hit tool call limit", "limit", MaxToolRounds)
-			dur := time.Since(start).Seconds()
-			e.hooks.complete(&CompleteEvent{
-				Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
-				TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
-			})
-			return &RunResult{
-				Status:           StatusComplete,
-				Analysis:         "Triage terminated: tool call budget exhausted",
-				ToolsUsed:        sortedKeys(toolsUsedSet),
-				Conversation:     conv,
-				CompletedAt:      time.Now(),
-				Duration:         dur,
-				LLMTime:          totalLLMTime,
-				ToolTime:         totalToolTime,
-				InputTokensUsed:  totalInputTokens,
-				OutputTokensUsed: totalOutputTokens,
-				ToolCalls:        totalToolCalls,
-				SystemPrompt:     systemPrompt,
-				Model:            lastModel,
-			}
+			return budgetResult("Triage terminated: tool call budget exhausted")
 		}
-		if totalInputTokens+totalOutputTokens >= MaxTokens {
-			L.Warn(ctx, "triage hit token limit", "limit", MaxTokens)
-			dur := time.Since(start).Seconds()
-			e.hooks.complete(&CompleteEvent{
-				Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
-				TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
-			})
-			return &RunResult{
-				Status:           StatusComplete,
-				Analysis:         "Triage terminated: token budget exhausted",
-				ToolsUsed:        sortedKeys(toolsUsedSet),
-				Conversation:     conv,
-				CompletedAt:      time.Now(),
-				Duration:         dur,
-				LLMTime:          totalLLMTime,
-				ToolTime:         totalToolTime,
-				InputTokensUsed:  totalInputTokens,
-				OutputTokensUsed: totalOutputTokens,
-				ToolCalls:        totalToolCalls,
-				SystemPrompt:     systemPrompt,
-				Model:            lastModel,
-			}
+		if totalInputTokens >= MaxInputTokens {
+			L.Warn(ctx, "triage hit input token limit", "limit", MaxInputTokens, "used", totalInputTokens)
+			return budgetResult("Triage terminated: input token budget exhausted")
+		}
+		if totalOutputTokens >= MaxOutputTokens {
+			L.Warn(ctx, "triage hit output token limit", "limit", MaxOutputTokens, "used", totalOutputTokens)
+			return budgetResult("Triage terminated: output token budget exhausted")
 		}
 
 		var toolDefs []tools.ToolDef

@@ -331,7 +331,7 @@ func TestRun_MaxToolRoundsLimit(t *testing.T) {
 	}
 }
 
-func TestRun_MaxTokensLimit(t *testing.T) {
+func TestRun_MaxInputTokensLimit(t *testing.T) {
 	t.Parallel()
 
 	registry := tools.NewRegistry()
@@ -340,7 +340,7 @@ func TestRun_MaxTokensLimit(t *testing.T) {
 		output: json.RawMessage(`"ok"`),
 	})
 
-	// Each call uses 60k tokens, so after 2 calls (120k) we exceed MaxTokens (100k)
+	// Each call uses 120k input tokens, so after 2 calls (240k) we exceed MaxInputTokens (200k)
 	provider := &mockProvider{
 		responses: []*LLMResponse{
 			{
@@ -348,14 +348,14 @@ func TestRun_MaxTokensLimit(t *testing.T) {
 					{Type: "tool_use", ID: "call-1", Name: "token_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: StopToolUse,
-				Usage:      Usage{InputTokens: 30000, OutputTokens: 30000},
+				Usage:      Usage{InputTokens: 120000, OutputTokens: 100},
 			},
 			{
 				Content: []ContentBlock{
 					{Type: "tool_use", ID: "call-2", Name: "token_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: StopToolUse,
-				Usage:      Usage{InputTokens: 30000, OutputTokens: 30000},
+				Usage:      Usage{InputTokens: 120000, OutputTokens: 100},
 			},
 		},
 	}
@@ -366,8 +366,48 @@ func TestRun_MaxTokensLimit(t *testing.T) {
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
 	}
-	if !strings.Contains(rr.Analysis, "token budget") {
-		t.Errorf("analysis = %q, want it to mention token budget", rr.Analysis)
+	if !strings.Contains(rr.Analysis, "input token budget") {
+		t.Errorf("analysis = %q, want it to mention input token budget", rr.Analysis)
+	}
+}
+
+func TestRun_MaxOutputTokensLimit(t *testing.T) {
+	t.Parallel()
+
+	registry := tools.NewRegistry()
+	registry.Register(&mockTool{
+		name:   "token_tool",
+		output: json.RawMessage(`"ok"`),
+	})
+
+	// Each call uses 30k output tokens, so after 2 calls (60k) we exceed MaxOutputTokens (50k)
+	provider := &mockProvider{
+		responses: []*LLMResponse{
+			{
+				Content: []ContentBlock{
+					{Type: "tool_use", ID: "call-1", Name: "token_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: StopToolUse,
+				Usage:      Usage{InputTokens: 100, OutputTokens: 30000},
+			},
+			{
+				Content: []ContentBlock{
+					{Type: "tool_use", ID: "call-2", Name: "token_tool", Input: json.RawMessage(`{}`)},
+				},
+				StopReason: StopToolUse,
+				Usage:      Usage{InputTokens: 100, OutputTokens: 30000},
+			},
+		},
+	}
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
+
+	if rr.Status != StatusComplete {
+		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
+	}
+	if !strings.Contains(rr.Analysis, "output token budget") {
+		t.Errorf("analysis = %q, want it to mention output token budget", rr.Analysis)
 	}
 }
 
