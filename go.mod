@@ -6,6 +6,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/exaring/otelpgx v0.10.0
 	github.com/go-chi/chi/v5 v5.2.5
+	github.com/grafana/otel-profiling-go v0.5.1
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/linnemanlabs/go-core v0.0.0-20260226025838-e2c27309019e
 	github.com/oklog/ulid/v2 v2.1.1

@@ -15,10 +15,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	otelpyroscope "github.com/grafana/otel-profiling-go"
 	"github.com/linnemanlabs/go-core/cfg"
 	"github.com/linnemanlabs/go-core/opshttp"
 	"github.com/linnemanlabs/go-core/prof"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
 
 	"github.com/linnemanlabs/go-core/health"
 
@@ -192,6 +194,18 @@ func run() error {
 	}
 	if shutdownOtelx != nil {
 		defer func() { _ = shutdownOtelx(context.Background()) }()
+	}
+
+	// wrap otel tracer provider with pyroscope tracer provider, this tags spans with pyroscope profile id and allows pyroscope to correlate traces and profiles in the ui.
+	if profErr == nil && profCfg.EnablePyroscope {
+		L.Info(ctx, "otel pyroscope tracer provider enabled", "pyro_server", profCfg.PyroServer)
+
+		tp := otel.GetTracerProvider()
+		otel.SetTracerProvider(otelpyroscope.NewTracerProvider(
+			tp,
+			otelpyroscope.WithAppName("vigil-server"),
+			otelpyroscope.WithPyroscopeURL(profCfg.PyroServer),
+		))
 	}
 
 	// Setup metrics, we use our own metrics package for internal instrumentation
