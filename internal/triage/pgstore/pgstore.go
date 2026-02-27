@@ -45,7 +45,7 @@ func (s *Store) Close() {
 }
 
 const triageColumns = `id, fingerprint, status, alert_name, severity, summary, analysis,
-	tools_used, created_at, completed_at, duration_s, llm_time_s, tool_time_s, tokens_used, tool_calls, system_prompt, model`
+	tools_used, created_at, completed_at, duration_s, llm_time_s, tool_time_s, tokens_in, tokens_out, tool_calls, system_prompt, model`
 
 // Get retrieves a triage result by ID.
 //
@@ -216,8 +216,8 @@ func (s *Store) upsertTriage(ctx context.Context, tx pgx.Tx, r *triage.Result) e
 
 	query := `INSERT INTO triage_runs (
 		id, fingerprint, status, alert_name, severity, summary, analysis,
-		tools_used, created_at, completed_at, duration_s, llm_time_s, tool_time_s, tokens_used, tool_calls, system_prompt, model
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+		tools_used, created_at, completed_at, duration_s, llm_time_s, tool_time_s, tokens_in, tokens_out, tool_calls, system_prompt, model
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 	ON CONFLICT (id) DO UPDATE SET
 		fingerprint   = EXCLUDED.fingerprint,
 		status        = EXCLUDED.status,
@@ -230,14 +230,15 @@ func (s *Store) upsertTriage(ctx context.Context, tx pgx.Tx, r *triage.Result) e
 		duration_s    = EXCLUDED.duration_s,
 		llm_time_s    = EXCLUDED.llm_time_s,
 		tool_time_s   = EXCLUDED.tool_time_s,
-		tokens_used   = EXCLUDED.tokens_used,
+		tokens_in     = EXCLUDED.tokens_in,
+		tokens_out    = EXCLUDED.tokens_out,
 		tool_calls    = EXCLUDED.tool_calls,
 		system_prompt = EXCLUDED.system_prompt,
 		model         = EXCLUDED.model`
 
 	_, err = tx.Exec(ctx, query,
 		r.ID, r.Fingerprint, string(r.Status), r.Alert, r.Severity, r.Summary, r.Analysis,
-		toolsUsedJSON, r.CreatedAt, completedAt, r.Duration, r.LLMTime, r.ToolTime, r.TokensUsed, r.ToolCalls,
+		toolsUsedJSON, r.CreatedAt, completedAt, r.Duration, r.LLMTime, r.ToolTime, r.TokensIn, r.TokensOut, r.ToolCalls,
 		r.SystemPrompt, r.Model,
 	)
 	if err != nil {
@@ -379,7 +380,7 @@ func (s *Store) scanTriageRow(row pgx.Row) (*triage.Result, error) {
 
 	err := row.Scan(
 		&r.ID, &r.Fingerprint, &status, &r.Alert, &r.Severity, &r.Summary, &r.Analysis,
-		&toolsUsedJSON, &r.CreatedAt, &completedAt, &r.Duration, &r.LLMTime, &r.ToolTime, &r.TokensUsed, &r.ToolCalls,
+		&toolsUsedJSON, &r.CreatedAt, &completedAt, &r.Duration, &r.LLMTime, &r.ToolTime, &r.TokensIn, &r.TokensOut, &r.ToolCalls,
 		&r.SystemPrompt, &r.Model,
 	)
 	if err != nil {

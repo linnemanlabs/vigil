@@ -148,7 +148,8 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 	result.Duration = rr.Duration
 	result.LLMTime = rr.LLMTime
 	result.ToolTime = rr.ToolTime
-	result.TokensUsed = rr.TokensUsed
+	result.TokensIn = rr.InputTokensUsed
+	result.TokensOut = rr.OutputTokensUsed
 	result.ToolCalls = rr.ToolCalls
 	result.SystemPrompt = rr.SystemPrompt
 	result.Model = rr.Model
@@ -182,7 +183,8 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 		"duration", rr.Duration,
 		"llm_time", rr.LLMTime,
 		"tool_time", rr.ToolTime,
-		"tokens", rr.TokensUsed,
+		"tokens_in", rr.InputTokensUsed,
+		"tokens_out", rr.OutputTokensUsed,
 		"tool_calls", rr.ToolCalls,
 		"model", rr.Model,
 	)

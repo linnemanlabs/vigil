@@ -35,7 +35,6 @@ type RunResult struct {
 	Duration         float64
 	LLMTime          float64
 	ToolTime         float64
-	TokensUsed       int
 	InputTokensUsed  int
 	OutputTokensUsed int
 	ToolCalls        int
@@ -49,7 +48,8 @@ type CompleteEvent struct {
 	Duration  float64
 	LLMTime   float64
 	ToolTime  float64
-	Tokens    int
+	TokensIn  int
+	TokensOut int
 	ToolCalls int
 	Model     string
 }
@@ -133,7 +133,7 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 			dur := time.Since(start).Seconds()
 			e.hooks.complete(CompleteEvent{
 				Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
-				Tokens: totalInputTokens + totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
+				TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
 			})
 			return &RunResult{
 				Status:           StatusComplete,
@@ -144,7 +144,6 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 				Duration:         dur,
 				LLMTime:          totalLLMTime,
 				ToolTime:         totalToolTime,
-				TokensUsed:       totalInputTokens + totalOutputTokens,
 				InputTokensUsed:  totalInputTokens,
 				OutputTokensUsed: totalOutputTokens,
 				ToolCalls:        totalToolCalls,
@@ -157,7 +156,7 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 			dur := time.Since(start).Seconds()
 			e.hooks.complete(CompleteEvent{
 				Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
-				Tokens: totalInputTokens + totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
+				TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
 			})
 			return &RunResult{
 				Status:           StatusComplete,
@@ -168,7 +167,6 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 				Duration:         dur,
 				LLMTime:          totalLLMTime,
 				ToolTime:         totalToolTime,
-				TokensUsed:       totalInputTokens + totalOutputTokens,
 				InputTokensUsed:  totalInputTokens,
 				OutputTokensUsed: totalOutputTokens,
 				ToolCalls:        totalToolCalls,
@@ -210,7 +208,7 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 			dur := time.Since(start).Seconds()
 			e.hooks.complete(CompleteEvent{
 				Status: StatusFailed, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
-				Tokens: totalInputTokens + totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
+				TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
 			})
 			return &RunResult{
 				Status:           StatusFailed,
@@ -221,7 +219,6 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 				Duration:         dur,
 				LLMTime:          totalLLMTime,
 				ToolTime:         totalToolTime,
-				TokensUsed:       totalInputTokens + totalOutputTokens,
 				InputTokensUsed:  totalInputTokens,
 				OutputTokensUsed: totalOutputTokens,
 				ToolCalls:        totalToolCalls,
@@ -289,7 +286,7 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 			dur := time.Since(start).Seconds()
 			e.hooks.complete(CompleteEvent{
 				Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
-				Tokens: totalInputTokens + totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
+				TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
 			})
 			return &RunResult{
 				Status:           StatusComplete,
@@ -300,7 +297,6 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 				Duration:         dur,
 				LLMTime:          totalLLMTime,
 				ToolTime:         totalToolTime,
-				TokensUsed:       totalInputTokens + totalOutputTokens,
 				InputTokensUsed:  totalInputTokens,
 				OutputTokensUsed: totalOutputTokens,
 				ToolCalls:        totalToolCalls,

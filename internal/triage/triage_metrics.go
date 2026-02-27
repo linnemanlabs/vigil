@@ -8,7 +8,8 @@ type Metrics struct {
 	TriageDuration  *prometheus.HistogramVec
 	TriageLLMTime   *prometheus.HistogramVec
 	TriageToolTime  prometheus.Histogram
-	TriageTokens    prometheus.Histogram
+	TriageTokensIn  prometheus.Histogram
+	TriageTokensOut prometheus.Histogram
 	TriageToolCalls prometheus.Histogram
 	LLMCallsTotal   prometheus.Counter
 	LLMTokensIn     prometheus.Counter
@@ -43,9 +44,14 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help:    "Total tool execution time per triage run in seconds.",
 			Buckets: prometheus.ExponentialBuckets(0.5, 2, 10), // 0.5s .. ~256s
 		}),
-		TriageTokens: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "vigil_triage_tokens",
-			Help:    "Tokens consumed per triage run.",
+		TriageTokensIn: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "vigil_triage_tokens_input",
+			Help:    "Input tokens consumed per triage run.",
+			Buckets: prometheus.ExponentialBuckets(100, 2, 12), // 100 .. ~409600
+		}),
+		TriageTokensOut: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "vigil_triage_tokens_output",
+			Help:    "Output tokens consumed per triage run.",
 			Buckets: prometheus.ExponentialBuckets(100, 2, 12), // 100 .. ~409600
 		}),
 		TriageToolCalls: prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -100,7 +106,8 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.TriageDuration,
 		m.TriageLLMTime,
 		m.TriageToolTime,
-		m.TriageTokens,
+		m.TriageTokensIn,
+		m.TriageTokensOut,
 		m.TriageToolCalls,
 		m.LLMCallsTotal,
 		m.LLMTokensIn,
@@ -140,7 +147,8 @@ func (m *Metrics) Hooks() EngineHooks {
 			m.TriageDuration.WithLabelValues(string(e.Status), e.Model).Observe(e.Duration)
 			m.TriageLLMTime.WithLabelValues(e.Model).Observe(e.LLMTime)
 			m.TriageToolTime.Observe(e.ToolTime)
-			m.TriageTokens.Observe(float64(e.Tokens))
+			m.TriageTokensIn.Observe(float64(e.TokensIn))
+			m.TriageTokensOut.Observe(float64(e.TokensOut))
 			m.TriageToolCalls.Observe(float64(e.ToolCalls))
 		},
 	}

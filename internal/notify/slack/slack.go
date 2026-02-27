@@ -125,7 +125,7 @@ func fieldsBlock(r *triage.Result) map[string]any {
 		},
 		{
 			"type": "mrkdwn",
-			"text": fmt.Sprintf("*Tokens:* %d", r.TokensUsed),
+			"text": fmt.Sprintf("*Tokens:* %d in / %d out", r.TokensIn, r.TokensOut),
 		},
 		{
 			"type": "mrkdwn",

@@ -94,8 +94,11 @@ func TestRun_SingleTurn(t *testing.T) {
 	if rr.Analysis != "analysis: all good" {
 		t.Errorf("analysis = %q, want %q", rr.Analysis, "analysis: all good")
 	}
-	if rr.TokensUsed != 150 {
-		t.Errorf("tokens = %d, want 150", rr.TokensUsed)
+	if rr.InputTokensUsed != 100 {
+		t.Errorf("InputTokensUsed = %d, want 100", rr.InputTokensUsed)
+	}
+	if rr.OutputTokensUsed != 50 {
+		t.Errorf("OutputTokensUsed = %d, want 50", rr.OutputTokensUsed)
 	}
 	if rr.Duration <= 0 {
 		t.Error("expected positive duration")
@@ -171,8 +174,11 @@ func TestRun_ToolUseLoop(t *testing.T) {
 	if rr.ToolCalls != 1 {
 		t.Errorf("tool_calls = %d, want 1", rr.ToolCalls)
 	}
-	if rr.TokensUsed != 450 {
-		t.Errorf("tokens = %d, want 450", rr.TokensUsed)
+	if rr.InputTokensUsed != 300 {
+		t.Errorf("InputTokensUsed = %d, want 300", rr.InputTokensUsed)
+	}
+	if rr.OutputTokensUsed != 150 {
+		t.Errorf("OutputTokensUsed = %d, want 150", rr.OutputTokensUsed)
 	}
 	// Should have 3 turns: assistant (tool_use), user (tool_result), assistant (final)
 	if len(rr.Conversation.Turns) != 3 {
@@ -739,8 +745,5 @@ func TestRun_CreatesSpans(t *testing.T) {
 	}
 	if rr.OutputTokensUsed != 130 {
 		t.Errorf("OutputTokensUsed = %d, want 130", rr.OutputTokensUsed)
-	}
-	if rr.TokensUsed != 430 {
-		t.Errorf("TokensUsed = %d, want 430", rr.TokensUsed)
 	}
 }

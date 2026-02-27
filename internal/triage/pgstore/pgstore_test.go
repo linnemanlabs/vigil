@@ -50,7 +50,8 @@ func TestPutAndGet(t *testing.T) {
 		Duration:    1.23,
 		LLMTime:     0.85,
 		ToolTime:    0.38,
-		TokensUsed:  500,
+		TokensIn:    300,
+		TokensOut:   200,
 		ToolCalls:   3,
 	}
 
@@ -76,7 +77,8 @@ func TestPutAndGet(t *testing.T) {
 	assertEqual(t, "Duration", r.Duration, got.Duration)
 	assertEqual(t, "LLMTime", r.LLMTime, got.LLMTime)
 	assertEqual(t, "ToolTime", r.ToolTime, got.ToolTime)
-	assertEqual(t, "TokensUsed", r.TokensUsed, got.TokensUsed)
+	assertEqual(t, "TokensIn", r.TokensIn, got.TokensIn)
+	assertEqual(t, "TokensOut", r.TokensOut, got.TokensOut)
 	assertEqual(t, "ToolCalls", r.ToolCalls, got.ToolCalls)
 
 	if len(got.ToolsUsed) != 2 || got.ToolsUsed[0] != "query_logs" || got.ToolsUsed[1] != "query_metrics" {
@@ -171,7 +173,8 @@ func TestUpsert(t *testing.T) {
 	r.Duration = 60.0
 	r.LLMTime = 45.0
 	r.ToolTime = 12.5
-	r.TokensUsed = 1200
+	r.TokensIn = 800
+	r.TokensOut = 400
 	r.ToolCalls = 5
 
 	if err := s.Put(ctx, r); err != nil {
@@ -191,7 +194,8 @@ func TestUpsert(t *testing.T) {
 	assertEqual(t, "Duration", 60.0, got.Duration)
 	assertEqual(t, "LLMTime", 45.0, got.LLMTime)
 	assertEqual(t, "ToolTime", 12.5, got.ToolTime)
-	assertEqual(t, "TokensUsed", 1200, got.TokensUsed)
+	assertEqual(t, "TokensIn", 800, got.TokensIn)
+	assertEqual(t, "TokensOut", 400, got.TokensOut)
 	assertEqual(t, "ToolCalls", 5, got.ToolCalls)
 }
 
