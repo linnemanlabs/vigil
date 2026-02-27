@@ -169,7 +169,9 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 	}
 
 	if err := s.notifier.Send(ctx, result); err != nil {
-		L.Warn(ctx, "slack notification failed", "err", err)
+		L.Warn(ctx, "notification failed", "err", err)
+	} else {
+		L.Info(ctx, "notification sent", "triage_id", id)
 	}
 
 	L.Info(ctx, "triage complete",

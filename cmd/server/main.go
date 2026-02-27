@@ -250,7 +250,7 @@ func run() error {
 	var notifier triage.Notifier
 	if appCfg.SlackWebhookURL != "" {
 		notifier = slack.New(appCfg.SlackWebhookURL)
-		L.Info(ctx, "slack notifications enabled")
+		L.Info(ctx, "notifier enabled", "type", "slack")
 	}
 
 	// Initialize the triage service (owns dedup, lifecycle, async dispatch).
