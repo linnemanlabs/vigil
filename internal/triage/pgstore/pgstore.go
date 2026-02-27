@@ -30,20 +30,9 @@ type Store struct {
 	pool *pgxpool.Pool
 }
 
-// New connects to PostgreSQL, applies the schema, and returns a ready Store.
-func New(ctx context.Context, databaseURL string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("pgxpool.New: %w", err)
-	}
-
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("ping: %w", err)
-	}
-
+// New applies the schema on the given pool and returns a ready Store.
+func New(ctx context.Context, pool *pgxpool.Pool) (*Store, error) {
 	if _, err := pool.Exec(ctx, schema); err != nil {
-		pool.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/linnemanlabs/vigil/internal/postgres"
 	"github.com/linnemanlabs/vigil/internal/triage"
 	"github.com/linnemanlabs/vigil/internal/triage/pgstore"
 )
@@ -18,8 +19,13 @@ func openStore(t *testing.T) *pgstore.Store {
 		t.Skip("VIGIL_TEST_DATABASE_URL not set, skipping integration test")
 	}
 	ctx := context.Background()
-	s, err := pgstore.New(ctx, dsn)
+	pool, err := postgres.NewPool(ctx, dsn)
 	if err != nil {
+		t.Fatalf("postgres.NewPool: %v", err)
+	}
+	s, err := pgstore.New(ctx, pool)
+	if err != nil {
+		pool.Close()
 		t.Fatalf("pgstore.New: %v", err)
 	}
 	t.Cleanup(s.Close)

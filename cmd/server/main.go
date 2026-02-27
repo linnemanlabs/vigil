@@ -31,10 +31,13 @@ import (
 	"github.com/linnemanlabs/go-core/otelx"
 	v "github.com/linnemanlabs/go-core/version"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/linnemanlabs/vigil/internal/alertapi"
 	vc "github.com/linnemanlabs/vigil/internal/cfg"
 	"github.com/linnemanlabs/vigil/internal/llm/claude"
 	"github.com/linnemanlabs/vigil/internal/notify/slack"
+	"github.com/linnemanlabs/vigil/internal/postgres"
 	"github.com/linnemanlabs/vigil/internal/tools"
 	"github.com/linnemanlabs/vigil/internal/triage"
 	"github.com/linnemanlabs/vigil/internal/triage/memstore"
@@ -218,11 +221,15 @@ func run() error {
 	// Initialize the triage store
 	var triageStore triage.Store
 	if appCfg.DatabaseURL != "" {
-		pgStore, err := pgstore.New(ctx, appCfg.DatabaseURL)
+		pool, err := postgres.NewPool(ctx, appCfg.DatabaseURL)
+		if err != nil {
+			return fmt.Errorf("postgres pool: %w", err)
+		}
+		defer pool.Close()
+		pgStore, err := pgstore.New(ctx, pool)
 		if err != nil {
 			return fmt.Errorf("pgstore init: %w", err)
 		}
-		defer pgStore.Close()
 		triageStore = pgStore
 		L.Info(ctx, "using postgres store")
 	} else {
@@ -240,6 +247,20 @@ func run() error {
 	// Initialize triage metrics on the shared Prometheus registry.
 	triageMetrics := triage.NewMetrics(m.Registry())
 
+	// Register per-query DB duration histogram and wire the observer.
+	dbQueryDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "vigil_db_query_duration_seconds",
+		Help:    "Duration of individual database queries.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"method", "route", "outcome"})
+	m.Registry().MustRegister(dbQueryDuration)
+
+	postgres.SetQueryObserver(postgres.QueryObserverFunc(
+		func(_ context.Context, method, route, outcome string, dur time.Duration) {
+			dbQueryDuration.WithLabelValues(method, route, outcome).Observe(dur.Seconds())
+		},
+	))
+
 	// Initialize the triage engine (pure - no store dependency).
 	claudeEngine := triage.NewEngine(claudeProvider, registry, L, triageMetrics.Hooks())
 	if claudeEngine == nil {
@@ -249,7 +270,7 @@ func run() error {
 	// Initialize Slack notifier for triage result notifications.
 	var notifier triage.Notifier
 	if appCfg.SlackWebhookURL != "" {
-		notifier = slack.New(appCfg.SlackWebhookURL)
+		notifier = slack.New(appCfg.SlackWebhookURL, L)
 		L.Info(ctx, "notifier enabled", "type", "slack")
 	}
 
@@ -298,6 +319,13 @@ func run() error {
 
 	// Annotate logger (and tracer if trace is recording) with http.route from chi route pattern
 	r.Use(httpmw.AnnotateHTTPRoute)
+
+	// Stash HTTP method in context for DB query metrics labelling.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(postgres.WithHTTPMethod(req.Context(), req.Method)))
+		})
+	})
 
 	// Access log middleware
 	r.Use(httpmw.AccessLog())
