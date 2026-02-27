@@ -21,7 +21,7 @@ var tracer = otel.Tracer("github.com/linnemanlabs/vigil/internal/triage")
 
 const (
 	MaxToolRounds  = 15
-	MaxTokens      = 50000
+	MaxTokens      = 100000
 	ResponseTokens = 4096
 )
 
