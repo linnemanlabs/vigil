@@ -86,7 +86,7 @@ func TestRun_SingleTurn(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
-	rr := engine.Run(context.Background(), testAlert(), nil)
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -160,7 +160,7 @@ func TestRun_ToolUseLoop(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
-	rr := engine.Run(context.Background(), testAlert(), nil)
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -212,7 +212,7 @@ func TestRun_UnknownTool(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
-	rr := engine.Run(context.Background(), testAlert(), nil)
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -252,7 +252,7 @@ func TestRun_ToolExecutionError(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
-	rr := engine.Run(context.Background(), testAlert(), nil)
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -274,7 +274,7 @@ func TestRun_LLMError(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
-	rr := engine.Run(context.Background(), testAlert(), nil)
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
 	if rr.Status != StatusFailed {
 		t.Errorf("status = %q, want %q", rr.Status, StatusFailed)
@@ -308,7 +308,7 @@ func TestRun_MaxToolRoundsLimit(t *testing.T) {
 	provider := &mockProvider{responses: responses}
 	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
-	rr := engine.Run(context.Background(), testAlert(), nil)
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -351,7 +351,7 @@ func TestRun_MaxTokensLimit(t *testing.T) {
 	}
 	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
 
-	rr := engine.Run(context.Background(), testAlert(), nil)
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -427,7 +427,7 @@ func TestRun_ObserverCalledPerTurn(t *testing.T) {
 		return nil
 	}
 
-	rr := engine.Run(context.Background(), testAlert(), cb)
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), cb)
 	if rr.Status != StatusComplete {
 		t.Fatalf("status = %q, want %q", rr.Status, StatusComplete)
 	}
@@ -480,7 +480,7 @@ func TestRun_ObserverErrorDoesNotAbort(t *testing.T) {
 		return errors.New("callback boom")
 	}
 
-	rr := engine.Run(context.Background(), testAlert(), cb)
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), cb)
 
 	if rr.Status != StatusComplete {
 		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
@@ -552,7 +552,7 @@ func TestRun_HooksCalled(t *testing.T) {
 	}
 
 	engine := NewEngine(provider, registry, log.Nop(), hooks)
-	rr := engine.Run(context.Background(), testAlert(), nil)
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Fatalf("status = %q, want %q", rr.Status, StatusComplete)
@@ -624,7 +624,7 @@ func TestRun_CreatesSpans(t *testing.T) {
 	}
 
 	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
-	rr := engine.Run(context.Background(), testAlert(), nil)
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
 	if rr.Status != StatusComplete {
 		t.Fatalf("status = %q, want %q", rr.Status, StatusComplete)
@@ -645,7 +645,8 @@ func TestRun_CreatesSpans(t *testing.T) {
 		t.Errorf("execute_tool spans = %d, want 1", counts["execute_tool"])
 	}
 
-	// Verify key attributes on the first chat span.
+	// Verify key attributes on chat spans.
+	var chatSpanIdx int
 	for _, s := range spans {
 		if s.Name != "chat" {
 			continue
@@ -660,7 +661,16 @@ func TestRun_CreatesSpans(t *testing.T) {
 		if v, ok := attrs["gen_ai.response.model"]; !ok || v != "claude-sonnet-4-20250514" {
 			t.Errorf("chat span missing gen_ai.response.model, got %v", v)
 		}
-		break
+		if v, ok := attrs["vigil.triage.id"]; !ok || v != "test-triage-id" {
+			t.Errorf("chat span vigil.triage.id = %v, want test-triage-id", v)
+		}
+		if v, ok := attrs["vigil.alert.fingerprint"]; !ok || v != "fp-test" {
+			t.Errorf("chat span vigil.alert.fingerprint = %v, want fp-test", v)
+		}
+		if v, ok := attrs["vigil.chat.seq"]; !ok || v != int64(chatSpanIdx) {
+			t.Errorf("chat span vigil.chat.seq = %v, want %d", v, chatSpanIdx)
+		}
+		chatSpanIdx++
 	}
 
 	// Verify tool span attributes.
@@ -677,6 +687,12 @@ func TestRun_CreatesSpans(t *testing.T) {
 		}
 		if v, ok := attrs["vigil.tool.is_error"]; !ok || v != false {
 			t.Errorf("tool span vigil.tool.is_error = %v, want false", v)
+		}
+		if v, ok := attrs["vigil.triage.id"]; !ok || v != "test-triage-id" {
+			t.Errorf("tool span vigil.triage.id = %v, want test-triage-id", v)
+		}
+		if v, ok := attrs["vigil.tool.input"]; !ok || v != `{"q":"x"}` {
+			t.Errorf("tool span vigil.tool.input = %v, want {\"q\":\"x\"}", v)
 		}
 		break
 	}

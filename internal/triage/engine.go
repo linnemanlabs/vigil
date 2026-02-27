@@ -103,7 +103,7 @@ func NewEngine(provider Provider, registry *tools.Registry, logger log.Logger, h
 // containing the outcome; the caller is responsible for persisting it.
 // If onTurn is non-nil it is called after each turn is appended to the
 // conversation; errors are logged but do not abort the triage loop.
-func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) *RunResult {
+func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTurn TurnCallback) *RunResult {
 	start := time.Now()
 
 	L := e.logger.With(
@@ -122,6 +122,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 	var totalToolCalls int
 	var totalLLMTime, totalToolTime float64
 	var lastModel string
+	var chatSeq int
 	toolsUsedSet := make(map[string]struct{})
 
 	systemPrompt := buildSystemPrompt(al)
@@ -187,6 +188,9 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 			attribute.String("gen_ai.operation.name", "chat"),
 			attribute.String("gen_ai.provider.name", "anthropic"),
 			attribute.Int("gen_ai.request.max_tokens", ResponseTokens),
+			attribute.String("vigil.triage.id", triageID),
+			attribute.String("vigil.alert.fingerprint", al.Fingerprint),
+			attribute.Int("vigil.chat.seq", chatSeq),
 		))
 		resp, err := e.provider.Send(ctx, &LLMRequest{
 			MaxTokens: ResponseTokens,
@@ -237,6 +241,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 			attribute.StringSlice("gen_ai.response.finish_reasons", []string{string(resp.StopReason)}),
 		)
 		llmSpan.End()
+		chatSeq++
 
 		L.Info(ctx, "llm response",
 			"stop_reason", resp.StopReason,
@@ -297,7 +302,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 
 		// handle tool calls
 		if resp.StopReason == StopToolUse {
-			toolResults, calls, batchToolDur := e.executeToolCalls(ctx, L, resp.Content, toolsUsedSet)
+			toolResults, calls, batchToolDur := e.executeToolCalls(ctx, L, resp.Content, toolsUsedSet, triageID, al.Fingerprint)
 			totalToolCalls += calls
 			totalToolTime += batchToolDur
 
@@ -328,7 +333,7 @@ func notifyTurn(ctx context.Context, logger log.Logger, onTurn TurnCallback, con
 	}
 }
 
-func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, content []ContentBlock, seen map[string]struct{}) (results []ContentBlock, calls int, totalDur float64) {
+func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, content []ContentBlock, seen map[string]struct{}, triageID, fingerprint string) (results []ContentBlock, calls int, totalDur float64) {
 	for i := range content {
 		block := &content[i]
 		if block.Type != "tool_use" {
@@ -346,6 +351,9 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 				attribute.String("gen_ai.tool.name", block.Name),
 				attribute.String("gen_ai.tool.call.id", block.ID),
 				attribute.Bool("vigil.tool.is_error", true),
+				attribute.String("vigil.triage.id", triageID),
+				attribute.String("vigil.alert.fingerprint", fingerprint),
+				attribute.String("vigil.tool.input", truncateSpanField(string(block.Input), 1024)),
 			))
 			toolSpan.SetStatus(codes.Error, "unknown tool")
 			toolSpan.End()
@@ -365,6 +373,9 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 			attribute.String("gen_ai.tool.name", block.Name),
 			attribute.String("gen_ai.tool.call.id", block.ID),
 			attribute.Int("vigil.tool.input_bytes", len(block.Input)),
+			attribute.String("vigil.triage.id", triageID),
+			attribute.String("vigil.alert.fingerprint", fingerprint),
+			attribute.String("vigil.tool.input", truncateSpanField(string(block.Input), 1024)),
 		))
 
 		toolStart := time.Now()
@@ -421,6 +432,13 @@ func sortedKeys(m map[string]struct{}) []string {
 	}
 	slices.Sort(keys)
 	return keys
+}
+
+func truncateSpanField(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }
 
 // buildSystemPrompt constructs the system prompt for the LLM.

@@ -139,7 +139,7 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 		return
 	}
 
-	rr := s.engine.Run(ctx, al, s.buildOnTurn(ctx, id))
+	rr := s.engine.Run(ctx, id, al, s.buildOnTurn(ctx, id))
 
 	result.Status = rr.Status
 	result.Analysis = rr.Analysis
