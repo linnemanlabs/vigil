@@ -12,11 +12,14 @@ import (
 	"github.com/linnemanlabs/vigil/internal/triage"
 )
 
+// Client is a wrapper around the Anthropic SDK client that implements our internal triage.Provider interface,
+// allowing us to send requests to the Claude API and receive responses in our internal format.
 type Client struct {
 	client anthropic.Client
 	model  anthropic.Model
 }
 
+// New creates a new Claude API client with the given API key and model name.
 func New(apiKey, model string) *Client {
 	return &Client{
 		model:  anthropic.Model(model),
@@ -24,6 +27,8 @@ func New(apiKey, model string) *Client {
 	}
 }
 
+// Send sends a request to the Claude API, converting from our internal LLMRequest format to the SDK's expected format,
+// and then converts the response back to our internal LLMResponse format. It handles any errors that occur during the API call.
 func (c *Client) Send(ctx context.Context, req *triage.LLMRequest) (*triage.LLMResponse, error) {
 	params := anthropic.MessageNewParams{
 		Model:     c.model,
@@ -35,23 +40,10 @@ func (c *Client) Send(ctx context.Context, req *triage.LLMRequest) (*triage.LLMR
 		Tools:    toSDKTools(req.Tools),
 	}
 
-	// debug: log outgoing request
-	/*
-		if reqJSON, err := json.MarshalIndent(params, "", "  "); err == nil {
-			fmt.Fprintf(os.Stderr, "==> claude request:\n%s\n", reqJSON)
-		}
-	*/
-
 	resp, err := c.client.Messages.New(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("claude api: %w", err)
 	}
-	/*
-		// debug: log response
-		if respJSON, err := json.MarshalIndent(resp, "", "  "); err == nil {
-			fmt.Fprintf(os.Stderr, "==> claude response:\n%s\n", respJSON)
-		}
-	*/
 	return fromSDKResponse(resp), nil
 }
 
@@ -59,28 +51,28 @@ func toSDKMessages(msgs []triage.Message) []anthropic.MessageParam {
 	out := make([]anthropic.MessageParam, len(msgs))
 	for i, m := range msgs {
 		blocks := make([]anthropic.ContentBlockParamUnion, len(m.Content))
-		for j, b := range m.Content {
-			switch b.Type {
+		for j := range m.Content {
+			switch m.Content[j].Type {
 			case "text":
 				blocks[j] = anthropic.ContentBlockParamUnion{
-					OfText: &anthropic.TextBlockParam{Text: b.Text},
+					OfText: &anthropic.TextBlockParam{Text: m.Content[j].Text},
 				}
 			case "tool_use":
 				blocks[j] = anthropic.ContentBlockParamUnion{
 					OfToolUse: &anthropic.ToolUseBlockParam{
-						ID:    b.ID,
-						Name:  b.Name,
-						Input: b.Input,
+						ID:    m.Content[j].ID,
+						Name:  m.Content[j].Name,
+						Input: m.Content[j].Input,
 					},
 				}
 			case "tool_result":
 				blocks[j] = anthropic.ContentBlockParamUnion{
 					OfToolResult: &anthropic.ToolResultBlockParam{
-						ToolUseID: b.ToolUseID,
+						ToolUseID: m.Content[j].ToolUseID,
 						Content: []anthropic.ToolResultBlockParamContentUnion{
-							{OfText: &anthropic.TextBlockParam{Text: b.Content}},
+							{OfText: &anthropic.TextBlockParam{Text: m.Content[j].Content}},
 						},
-						IsError: anthropic.Bool(b.IsError),
+						IsError: anthropic.Bool(m.Content[j].IsError),
 					},
 				}
 			}
@@ -113,7 +105,9 @@ func toSDKTools(defs []tools.ToolDef) []anthropic.ToolUnionParam {
 
 func fromSDKResponse(r *anthropic.Message) *triage.LLMResponse {
 	blocks := make([]triage.ContentBlock, len(r.Content))
-	for i, b := range r.Content {
+
+	for i := range r.Content {
+		b := &r.Content[i]
 		switch b.Type {
 		case "text":
 			blocks[i] = triage.ContentBlock{
@@ -136,6 +130,14 @@ func fromSDKResponse(r *anthropic.Message) *triage.LLMResponse {
 		stopReason = triage.StopEnd
 	case anthropic.StopReasonToolUse:
 		stopReason = triage.StopToolUse
+	case anthropic.StopReasonMaxTokens:
+		stopReason = triage.StopMaxTokens
+	case anthropic.StopReasonStopSequence:
+		stopReason = triage.StopStopSequence
+	case anthropic.StopReasonPauseTurn:
+		stopReason = triage.StopPauseTurn
+	case anthropic.StopReasonRefusal:
+		stopReason = triage.StopRefusal
 	default:
 		stopReason = triage.StopReason(r.StopReason)
 	}

@@ -1,4 +1,3 @@
-// internal/triage/llm.go
 package triage
 
 import (
@@ -6,6 +5,26 @@ import (
 	"encoding/json"
 
 	"github.com/linnemanlabs/vigil/internal/tools"
+)
+
+const (
+	// StopEnd indicates the LLM stopped because it finished its response.
+	StopEnd StopReason = "end_turn"
+
+	// StopToolUse indicates the LLM stopped because it wants to call a tool.
+	StopToolUse StopReason = "tool_use"
+
+	// StopMaxTokens indicates the LLM stopped because it reached the maximum token limit.
+	StopMaxTokens StopReason = "max_tokens"
+
+	// StopStopSequence indicates the LLM stopped because it reached a stop sequence in the response.
+	StopStopSequence StopReason = "stop_sequence"
+
+	// StopPauseTurn indicates the LLM stopped because it wants to pause and wait for more input.
+	StopPauseTurn StopReason = "pause_turn"
+
+	// StopRefusal indicates the LLM stopped because it refused to answer (e.g. due to content policy).
+	StopRefusal StopReason = "refusal"
 )
 
 // Provider is the interface for any LLM backend.
@@ -32,17 +51,14 @@ type LLMResponse struct {
 // StopReason indicates why the LLM stopped generating content, such as reaching the end of the response or requesting a tool call.
 type StopReason string
 
-const (
-	StopEnd     StopReason = "end_turn"
-	StopToolUse StopReason = "tool_use"
-)
-
 // Message represents a single message in the conversation, which can be from the user or the assistant, and can contain either text or tool calls.
 type Message struct {
 	Role    string         `json:"role"`
 	Content []ContentBlock `json:"content"`
 }
 
+// ContentBlock represents a block of content in the LLM response, which can be text, a tool call, or an error message.
+// It also includes metadata such as duration for tool calls.
 type ContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
@@ -55,6 +71,7 @@ type ContentBlock struct {
 	Duration  float64         `json:"-"`
 }
 
+// Usage represents the token usage for an LLM call, including input and output tokens.
 type Usage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`

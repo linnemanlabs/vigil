@@ -10,17 +10,17 @@ import (
 	"testing"
 )
 
-func newTestPrometheus(t *testing.T, handler http.HandlerFunc) (*PrometheusQuery, *httptest.Server) {
+func newTestPrometheus(t *testing.T, handler http.HandlerFunc) *PrometheusQuery {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return NewPrometheusQuery(srv.URL, "test"), srv
+	return NewPrometheusQuery(srv.URL, "test")
 }
 
 func TestPrometheusQuery_Success(t *testing.T) {
 	t.Parallel()
 
-	prom, _ := newTestPrometheus(t, func(w http.ResponseWriter, r *http.Request) {
+	prom := newTestPrometheus(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/query" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
@@ -28,7 +28,7 @@ func TestPrometheusQuery_Success(t *testing.T) {
 			t.Errorf("query = %q, want %q", r.URL.Query().Get("query"), "up")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"up"},"value":[1234,"1"]}]}}`)
+		_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"up"},"value":[1234,"1"]}]}}`)
 	})
 
 	out, err := prom.Execute(context.Background(), json.RawMessage(`{"query":"up"}`))
@@ -51,12 +51,12 @@ func TestPrometheusQuery_Success(t *testing.T) {
 func TestPrometheusQuery_WithTime(t *testing.T) {
 	t.Parallel()
 
-	prom, _ := newTestPrometheus(t, func(w http.ResponseWriter, r *http.Request) {
+	prom := newTestPrometheus(t, func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("time"); got != "2024-01-01T00:00:00Z" {
 			t.Errorf("time = %q, want %q", got, "2024-01-01T00:00:00Z")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+		_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
 	})
 
 	_, err := prom.Execute(context.Background(), json.RawMessage(`{"query":"up","time":"2024-01-01T00:00:00Z"}`))
@@ -68,7 +68,7 @@ func TestPrometheusQuery_WithTime(t *testing.T) {
 func TestPrometheusQuery_EmptyQuery(t *testing.T) {
 	t.Parallel()
 
-	prom, _ := newTestPrometheus(t, func(_ http.ResponseWriter, _ *http.Request) {
+	prom := newTestPrometheus(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Fatal("should not have made HTTP request")
 	})
 
@@ -84,7 +84,7 @@ func TestPrometheusQuery_EmptyQuery(t *testing.T) {
 func TestPrometheusQuery_InvalidParams(t *testing.T) {
 	t.Parallel()
 
-	prom, _ := newTestPrometheus(t, func(_ http.ResponseWriter, _ *http.Request) {
+	prom := newTestPrometheus(t, func(_ http.ResponseWriter, _ *http.Request) {
 		t.Fatal("should not have made HTTP request")
 	})
 
@@ -100,9 +100,9 @@ func TestPrometheusQuery_InvalidParams(t *testing.T) {
 func TestPrometheusQuery_HTTPError(t *testing.T) {
 	t.Parallel()
 
-	prom, _ := newTestPrometheus(t, func(w http.ResponseWriter, _ *http.Request) {
+	prom := newTestPrometheus(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, "internal error")
+		_, _ = fmt.Fprint(w, "internal error")
 	})
 
 	_, err := prom.Execute(context.Background(), json.RawMessage(`{"query":"up"}`))
@@ -117,9 +117,9 @@ func TestPrometheusQuery_HTTPError(t *testing.T) {
 func TestPrometheusQuery_NonSuccessStatus(t *testing.T) {
 	t.Parallel()
 
-	prom, _ := newTestPrometheus(t, func(w http.ResponseWriter, _ *http.Request) {
+	prom := newTestPrometheus(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"status":"error","errorType":"bad_data","error":"parse error"}`)
+		_, _ = fmt.Fprint(w, `{"status":"error","errorType":"bad_data","error":"parse error"}`)
 	})
 
 	_, err := prom.Execute(context.Background(), json.RawMessage(`{"query":"bad{}"}`))
@@ -134,8 +134,8 @@ func TestPrometheusQuery_NonSuccessStatus(t *testing.T) {
 func TestPrometheusQuery_UnparsableResponse(t *testing.T) {
 	t.Parallel()
 
-	prom, _ := newTestPrometheus(t, func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, "this is not json at all")
+	prom := newTestPrometheus(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, "this is not json at all")
 	})
 
 	out, err := prom.Execute(context.Background(), json.RawMessage(`{"query":"up"}`))
@@ -150,13 +150,13 @@ func TestPrometheusQuery_UnparsableResponse(t *testing.T) {
 func TestPrometheusQuery_Truncation(t *testing.T) {
 	t.Parallel()
 
-	prom, _ := newTestPrometheus(t, func(w http.ResponseWriter, _ *http.Request) {
-		var results []string
+	prom := newTestPrometheus(t, func(w http.ResponseWriter, _ *http.Request) {
+		var results = make([]string, 0, 60)
 		for i := range 60 {
 			results = append(results, fmt.Sprintf(`{"metric":{"i":"%d"},"value":[1234,"%d"]}`, i, i))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[%s]}}`, strings.Join(results, ","))
+		_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[%s]}}`, strings.Join(results, ","))
 	})
 
 	out, err := prom.Execute(context.Background(), json.RawMessage(`{"query":"up"}`))
@@ -186,10 +186,34 @@ func TestPrometheusQuery_Truncation(t *testing.T) {
 	}
 }
 
+func FuzzPrometheusRangeExecute(f *testing.F) { //nolint:dupl // Similar fuzz test exists for Loki.Execute, but the input parameters and expected output are different enough that it's worth having a separate test.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"matrix","result":[]}}`)
+	}))
+	defer srv.Close()
+
+	prom := NewPrometheusQueryRange(srv.URL, "test")
+
+	f.Add(`{"query":"up","start":"2026-01-01T00:00:00Z"}`)
+	f.Add(`{"query":"","start":"2026-01-01T00:00:00Z"}`)
+	f.Add(`{"query":"up","start":""}`)
+	f.Add(`{}`)
+	f.Add(`not json`)
+	f.Add(`{"query":"rate(http_requests_total[5m])","start":"2026-01-01T00:00:00Z","end":"2026-01-01T06:00:00Z","step":"1m"}`)
+	f.Add(`{"query":"up","start":"2026-01-01T00:00:00Z","extra":true}`)
+	f.Add(string([]byte{0x00, 0xff, 0xfe}))
+
+	f.Fuzz(func(_ *testing.T, params string) {
+		// Must not panic
+		_, _ = prom.Execute(context.Background(), json.RawMessage(params))
+	})
+}
+
 func FuzzPrometheusExecute(f *testing.F) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
+		_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[]}}`)
 	}))
 	defer srv.Close()
 
@@ -202,7 +226,7 @@ func FuzzPrometheusExecute(f *testing.F) {
 	f.Add(`{"query":"rate(http_requests_total[5m])","time":"2024-01-01T00:00:00Z"}`)
 	f.Add(`{"query":"up","extra_field":123}`)
 
-	f.Fuzz(func(t *testing.T, params string) {
+	f.Fuzz(func(_ *testing.T, params string) {
 		// Must not panic
 		_, _ = prom.Execute(context.Background(), json.RawMessage(params))
 	})

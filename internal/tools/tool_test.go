@@ -12,8 +12,8 @@ type stubTool struct {
 }
 
 func (s *stubTool) Name() string                { return s.name }
-func (s *stubTool) Description() string          { return s.desc }
-func (s *stubTool) Parameters() json.RawMessage  { return json.RawMessage(`{"type":"object"}`) }
+func (s *stubTool) Description() string         { return s.desc }
+func (s *stubTool) Parameters() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
 func (s *stubTool) Execute(_ context.Context, _ json.RawMessage) (json.RawMessage, error) {
 	return json.RawMessage(`"ok"`), nil
 }

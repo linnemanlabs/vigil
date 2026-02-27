@@ -1,4 +1,3 @@
-// internal/tools/tool.go
 package tools
 
 import (
@@ -14,7 +13,7 @@ type Tool interface {
 	Execute(ctx context.Context, params json.RawMessage) (json.RawMessage, error)
 }
 
-// / ToolDef is the format for tool definitions expected by the AI API, derived from the Tool interface.
+// ToolDef is the format for tool definitions expected by the AI API, derived from the Tool interface.
 type ToolDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`

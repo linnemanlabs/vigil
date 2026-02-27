@@ -164,6 +164,54 @@ func TestShortModel(t *testing.T) {
 	}
 }
 
+func FuzzSlackBuild(f *testing.F) {
+	f.Add("HighCPU", "critical", "CPU is very high on node-1.", "claude-sonnet-4-20250514")
+	f.Add("", "", "", "")
+	f.Add("<@U123> mention", "warning", "*bold* _italic_ ~strike~", "model")
+	f.Add("alert\x00\x01\x02", "sev\nline", "analysis\ttab", "m\x00del")
+	f.Add(strings.Repeat("A", 5000), "critical", strings.Repeat("x", 10000), "model-name-20260101")
+	f.Add("test", "info", "```code block``` and <http://example.com|link>", "gpt-4o")
+
+	f.Fuzz(func(t *testing.T, alert, severity, analysis, model string) {
+		result := &triage.Result{
+			ID:          "fuzz-id",
+			Status:      triage.StatusComplete,
+			Alert:       alert,
+			Severity:    severity,
+			Analysis:    analysis,
+			Model:       model,
+			Duration:    1.0,
+			TokensIn:    100,
+			TokensOut:   50,
+			ToolCalls:   1,
+			CompletedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		}
+
+		// Must not panic
+		msg := buildMessage(result)
+
+		// Must produce valid JSON
+		data, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatalf("buildMessage produced non-marshalable output: %v", err)
+		}
+
+		// Must round-trip
+		var decoded map[string]any
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("buildMessage JSON does not round-trip: %v", err)
+		}
+
+		blocks, ok := decoded["blocks"].([]any)
+		if !ok {
+			t.Fatal("expected blocks array")
+		}
+		if len(blocks) != 7 {
+			t.Fatalf("blocks count = %d, want 7", len(blocks))
+		}
+	})
+}
+
 func TestSend_NonOKStatus(t *testing.T) {
 	t.Parallel()
 

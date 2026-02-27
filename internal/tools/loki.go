@@ -1,4 +1,3 @@
-// internal/tools/loki.go
 package tools
 
 import (
@@ -19,6 +18,92 @@ type LokiQuery struct {
 	httpClient *http.Client
 }
 
+type lokiInput struct {
+	Query string `json:"query"`
+	Start string `json:"start,omitempty"`
+	End   string `json:"end,omitempty"`
+	Limit int    `json:"limit,omitempty"`
+}
+
+type logLine struct {
+	Timestamp string            `json:"ts"`
+	Line      string            `json:"line"`
+	Labels    map[string]string `json:"labels,omitempty"`
+}
+
+type lokiStream struct {
+	Stream map[string]string `json:"stream"`
+	Values [][]string        `json:"values"`
+}
+
+type lokiResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		ResultType string       `json:"resultType"`
+		Result     []lokiStream `json:"result"`
+	} `json:"data"`
+}
+
+func flattenStreams(results []lokiStream, limit int) []logLine {
+	lines := make([]logLine, 0, limit)
+
+	for _, stream := range results {
+		includeLabels := true
+		for _, entry := range stream.Values {
+			if len(entry) < 2 {
+				continue
+			}
+			ll := logLine{
+				Timestamp: entry[0],
+				Line:      entry[1],
+			}
+			if includeLabels {
+				ll.Labels = stream.Stream
+				includeLabels = false
+			}
+			lines = append(lines, ll)
+			if len(lines) >= limit {
+				return lines
+			}
+		}
+	}
+	return lines
+}
+
+func parseLokiInput(params json.RawMessage) (lokiInput, error) {
+	var input lokiInput
+	if err := json.Unmarshal(params, &input); err != nil {
+		return input, fmt.Errorf("invalid params: %w", err)
+	}
+	if input.Query == "" {
+		return input, fmt.Errorf("query is required")
+	}
+
+	switch {
+	case input.Limit <= 0:
+		input.Limit = 100
+	case input.Limit > 500:
+		input.Limit = 500
+	}
+
+	now := time.Now().UTC()
+	if input.Start == "" {
+		input.Start = now.Add(-1 * time.Hour).Format(time.RFC3339Nano)
+	}
+	if input.End == "" {
+		input.End = now.Format(time.RFC3339Nano)
+	}
+
+	// Cap range to 6 hours
+	startTime, _ := time.Parse(time.RFC3339, input.Start)
+	endTime, _ := time.Parse(time.RFC3339, input.End)
+	if endTime.Sub(startTime) > 6*time.Hour {
+		input.Start = endTime.Add(-6 * time.Hour).Format(time.RFC3339Nano)
+	}
+
+	return input, nil
+}
+
 // NewLokiQuery creates a new Loki query tool with the given endpoint and tenant ID.
 func NewLokiQuery(endpoint, tenantID string) *LokiQuery {
 	return &LokiQuery{
@@ -28,8 +113,12 @@ func NewLokiQuery(endpoint, tenantID string) *LokiQuery {
 	}
 }
 
+const successStatus = "success"
+
+// Name returns the unique name of the tool, which is used to identify it when the LLM wants to call it.
 func (l *LokiQuery) Name() string { return "query_logs" }
 
+// Description returns an llm-friendly description of what the Loki query tool does and when to use it.
 func (l *LokiQuery) Description() string {
 	return `Query Loki for log entries using LogQL. Use this to search for logs from specific hosts, 
 services, or time ranges. Useful for investigating errors, checking what happened before or during 
@@ -47,6 +136,7 @@ When searching for multiple terms, prefer multiple sequential queries with |= ov
 `
 }
 
+// Parameters returns the JSON schema for the input parameters required to execute a Loki query.
 func (l *LokiQuery) Parameters() json.RawMessage {
 	return json.RawMessage(`{
         "type": "object",
@@ -72,26 +162,11 @@ func (l *LokiQuery) Parameters() json.RawMessage {
     }`)
 }
 
+// Execute performs the Loki query based on the provided parameters, handling HTTP communication and response parsing.
 func (l *LokiQuery) Execute(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
-	var input struct {
-		Query string `json:"query"`
-		Start string `json:"start,omitempty"`
-		End   string `json:"end,omitempty"`
-		Limit int    `json:"limit,omitempty"`
-	}
-	if err := json.Unmarshal(params, &input); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-
-	if input.Query == "" {
-		return nil, fmt.Errorf("query is required")
-	}
-
-	if input.Limit <= 0 {
-		input.Limit = 100
-	}
-	if input.Limit > 500 {
-		input.Limit = 500
+	input, err := parseLokiInput(params)
+	if err != nil {
+		return nil, err
 	}
 
 	now := time.Now().UTC()
@@ -124,7 +199,7 @@ func (l *LokiQuery) Execute(ctx context.Context, params json.RawMessage) (json.R
 	q.Set("direction", "backward")
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -133,13 +208,14 @@ func (l *LokiQuery) Execute(ctx context.Context, params json.RawMessage) (json.R
 		req.Header.Set("X-Scope-OrgID", l.tenantID)
 	}
 
-	resp, err := l.httpClient.Do(req)
+	resp, err := l.httpClient.Do(req) //nolint:gosec // G704 - endpoint is set at construction from config, not from tool params.
+	// LLM-controlled inputs (query, start, end, limit) are query-string encoded via url.Values.Set().
 	if err != nil {
 		return nil, fmt.Errorf("loki query failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20)) // 5 MB
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -148,59 +224,15 @@ func (l *LokiQuery) Execute(ctx context.Context, params json.RawMessage) (json.R
 		return nil, fmt.Errorf("loki returned %d: %s", resp.StatusCode, string(body))
 	}
 
-	var lokiResp struct {
-		Status string `json:"status"`
-		Data   struct {
-			ResultType string `json:"resultType"`
-			Result     []struct {
-				Stream map[string]string `json:"stream"`
-				Values [][]string        `json:"values"`
-			} `json:"result"`
-		} `json:"data"`
-	}
+	var lokiResp lokiResponse
 	if err := json.Unmarshal(body, &lokiResp); err != nil {
 		return body, nil
 	}
-
-	if lokiResp.Status != "success" {
+	if lokiResp.Status != successStatus {
 		return nil, fmt.Errorf("loki query failed: %s", string(body))
 	}
 
-	// flatten to readable log lines with timestamps
-	type logLine struct {
-		Timestamp string            `json:"ts"`
-		Line      string            `json:"line"`
-		Labels    map[string]string `json:"labels,omitempty"`
-	}
-
-	var lines []logLine
-	includeLabels := true
-
-	for _, stream := range lokiResp.Data.Result {
-		for _, entry := range stream.Values {
-			if len(entry) < 2 {
-				continue
-			}
-
-			ll := logLine{
-				Timestamp: entry[0],
-				Line:      entry[1],
-			}
-			if includeLabels {
-				ll.Labels = stream.Stream
-				includeLabels = false // only include labels on first line per stream
-			}
-
-			lines = append(lines, ll)
-
-			if len(lines) >= input.Limit {
-				break
-			}
-		}
-		if len(lines) >= input.Limit {
-			break
-		}
-	}
+	lines := flattenStreams(lokiResp.Data.Result, input.Limit)
 
 	output := map[string]any{
 		"stream_count": len(lokiResp.Data.Result),
@@ -208,6 +240,5 @@ func (l *LokiQuery) Execute(ctx context.Context, params json.RawMessage) (json.R
 		"lines":        lines,
 		"truncated":    len(lines) >= input.Limit,
 	}
-
 	return json.Marshal(output)
 }

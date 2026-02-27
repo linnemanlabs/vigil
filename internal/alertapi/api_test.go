@@ -240,7 +240,7 @@ func TestHandleIngestAlert_ValidFiringAlert(t *testing.T) {
 	}
 }
 
-func TestHandleIngestAlert_SkipsResolvedAlerts(t *testing.T) {
+func TestHandleIngestAlert_SkipsResolvedAlerts(t *testing.T) { //nolint:dupl // similar to TestHandleIngestAlert_DedupPendingFingerprint but with resolved status and expecting skip
 	t.Parallel()
 
 	r, svc := newTestRouter(t)
@@ -276,7 +276,7 @@ func TestHandleIngestAlert_SkipsResolvedAlerts(t *testing.T) {
 	}
 }
 
-func TestHandleIngestAlert_DedupPendingFingerprint(t *testing.T) {
+func TestHandleIngestAlert_DedupPendingFingerprint(t *testing.T) { //nolint:dupl // similar to TestHandleIngestAlert_ValidFiringAlert but with duplicate fingerprint and expecting skip
 	t.Parallel()
 
 	r, svc := newTestRouter(t)

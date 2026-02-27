@@ -56,7 +56,7 @@ func main() {
 	}
 }
 
-func run() error {
+func run() error { //nolint:gocognit // cognit of 37 is reasonable for now can split this up further if it grows much more
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

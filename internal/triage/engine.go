@@ -20,8 +20,13 @@ import (
 var tracer = otel.Tracer("github.com/linnemanlabs/vigil/internal/triage")
 
 const (
-	MaxToolRounds  = 15
-	MaxTokens      = 100000
+	// MaxToolRounds is the maximum number of tool calls allowed in a single triage before we abort to prevent infinite loops.
+	MaxToolRounds = 15
+
+	// MaxTokens is the maximum total input+output tokens allowed in a single triage before we abort to prevent runaway costs.
+	MaxTokens = 100000
+
+	// ResponseTokens is the max tokens we request from the LLM in a single response. this is separate from MaxTokens which is a global limit across all turns.
 	ResponseTokens = 4096
 )
 
@@ -59,22 +64,25 @@ type CompleteEvent struct {
 type EngineHooks struct {
 	OnLLMCall  func(inputTokens, outputTokens int, duration float64)
 	OnToolCall func(name string, duration float64, inputBytes, outputBytes int, isError bool)
-	OnComplete func(CompleteEvent)
+	OnComplete func(*CompleteEvent)
 }
 
+// llmCall is a helper to invoke the OnLLMCall hook if set.
 func (h *EngineHooks) llmCall(in, out int, dur float64) {
 	if h.OnLLMCall != nil {
 		h.OnLLMCall(in, out, dur)
 	}
 }
 
+// toolCall is a helper to invoke the OnToolCall hook if set.
 func (h *EngineHooks) toolCall(name string, dur float64, inBytes, outBytes int, isErr bool) {
 	if h.OnToolCall != nil {
 		h.OnToolCall(name, dur, inBytes, outBytes, isErr)
 	}
 }
 
-func (h *EngineHooks) complete(e CompleteEvent) {
+// complete is a helper to invoke the OnComplete hook if set.
+func (h *EngineHooks) complete(e *CompleteEvent) {
 	if h.OnComplete != nil {
 		h.OnComplete(e)
 	}
@@ -131,7 +139,7 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 		if totalToolCalls >= MaxToolRounds {
 			L.Warn(ctx, "triage hit tool call limit", "limit", MaxToolRounds)
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(CompleteEvent{
+			e.hooks.complete(&CompleteEvent{
 				Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
 				TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
 			})
@@ -154,7 +162,7 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 		if totalInputTokens+totalOutputTokens >= MaxTokens {
 			L.Warn(ctx, "triage hit token limit", "limit", MaxTokens)
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(CompleteEvent{
+			e.hooks.complete(&CompleteEvent{
 				Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
 				TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
 			})
@@ -206,7 +214,7 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 			llmSpan.End()
 			L.Error(ctx, err, "llm call failed")
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(CompleteEvent{
+			e.hooks.complete(&CompleteEvent{
 				Status: StatusFailed, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
 				TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
 			})
@@ -278,13 +286,14 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 		// done - extract final analysis
 		if resp.StopReason == StopEnd {
 			var analysis string
-			for _, block := range resp.Content {
-				if block.Type == "text" {
-					analysis = block.Text
+			for i := len(resp.Content) - 1; i >= 0; i-- {
+				if resp.Content[i].Type == "text" {
+					analysis = resp.Content[i].Text
+					break
 				}
 			}
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(CompleteEvent{
+			e.hooks.complete(&CompleteEvent{
 				Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
 				TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
 			})

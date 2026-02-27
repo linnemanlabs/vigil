@@ -1,4 +1,3 @@
-// internal/tools/prometheus_range.go
 package tools
 
 import (
@@ -12,12 +11,14 @@ import (
 	"time"
 )
 
+// PrometheusQueryRange is a tool for executing Prometheus range queries, which return metric data over a specified time range.
 type PrometheusQueryRange struct {
 	endpoint   string
 	tenantID   string
 	httpClient *http.Client
 }
 
+// NewPrometheusQueryRange creates a new instance of the PrometheusQueryRange tool with the given API endpoint and tenant ID.
 func NewPrometheusQueryRange(endpoint, tenantID string) *PrometheusQueryRange {
 	return &PrometheusQueryRange{
 		endpoint:   endpoint,
@@ -26,14 +27,17 @@ func NewPrometheusQueryRange(endpoint, tenantID string) *PrometheusQueryRange {
 	}
 }
 
+// Name returns the unique name of the tool, which is used to identify it when the LLM wants to call it.
 func (p *PrometheusQueryRange) Name() string { return "query_metrics_range" }
 
+// Description returns a human-friendly description of what the Prometheus range query tool does and when to use it.
 func (p *PrometheusQueryRange) Description() string {
 	return `Query Prometheus/Mimir metrics over a time range using PromQL. Use this to see trends, 
 check how a metric changed over time, and identify when problems started. Returns a series 
 of timestamped values for each matching time series.`
 }
 
+// Parameters returns the JSON schema for the input parameters required to execute a Prometheus range query.
 func (p *PrometheusQueryRange) Parameters() json.RawMessage {
 	return json.RawMessage(`{
         "type": "object",
@@ -59,6 +63,7 @@ func (p *PrometheusQueryRange) Parameters() json.RawMessage {
     }`)
 }
 
+// Execute performs the Prometheus range query based on the provided parameters, handling HTTP communication and response parsing.
 func (p *PrometheusQueryRange) Execute(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
 	var input struct {
 		Query string `json:"query"`
@@ -101,7 +106,7 @@ func (p *PrometheusQueryRange) Execute(ctx context.Context, params json.RawMessa
 
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -110,13 +115,14 @@ func (p *PrometheusQueryRange) Execute(ctx context.Context, params json.RawMessa
 		req.Header.Set("X-Scope-OrgID", p.tenantID)
 	}
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.httpClient.Do(req) //nolint:gosec // G704 - endpoint is set at construction from config, not from tool params.
+	// LLM-controlled inputs (query, start, end, limit) are query-string encoded via url.Values.Set().
 	if err != nil {
 		return nil, fmt.Errorf("prometheus range query failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20)) // 5 MB
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}

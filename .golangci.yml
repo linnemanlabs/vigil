@@ -31,23 +31,22 @@ linters:
     - thelper
     - usestdlibvars
     - reassign
-    - govet
-    - ineffassign
-    - dupl
-    - copyloopvar
-    - nolintlint
-    - copyloopvar
     - ineffassign
     - dupl
     - nolintlint
+    - copyloopvar
     - spancheck
     - sloglint
     - fatcontext
     - promlinter
+    - gosmopolitan
+    - nosprintfhostport
+    - makezero
+    - protogetter
+    - errname
   exclusions:
     rules:
-
-
+          
   settings:
     gosec:
       excludes: []

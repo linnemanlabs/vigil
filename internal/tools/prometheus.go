@@ -1,4 +1,3 @@
-// internal/tools/prometheus.go
 package tools
 
 import (
@@ -12,12 +11,14 @@ import (
 	"time"
 )
 
+// PrometheusQuery is a tool for executing Prometheus instant queries, which return the value of metrics at a single point in time.
 type PrometheusQuery struct {
 	endpoint   string
 	httpClient *http.Client
 	tenantID   string
 }
 
+// NewPrometheusQuery creates a new instance of the PrometheusQuery tool with the given API endpoint and tenant ID.
 func NewPrometheusQuery(endpoint, tenant string) *PrometheusQuery {
 	return &PrometheusQuery{
 		endpoint: endpoint,
@@ -28,14 +29,17 @@ func NewPrometheusQuery(endpoint, tenant string) *PrometheusQuery {
 	}
 }
 
+// Name returns the unique name of the tool, which is used to identify it when the LLM wants to call it.
 func (p *PrometheusQuery) Name() string { return "query_metrics" }
 
+// Description returns a human-friendly description of what the Prometheus query tool does and when to use it.
 func (p *PrometheusQuery) Description() string {
 	return `Query Prometheus/Mimir metrics using PromQL. Use this to investigate metric values, 
 check current and historical resource usage, labels that carry metadata, and correlate alert conditions with raw data. 
 Returns instant query results with labels and values.`
 }
 
+// Parameters returns the JSON schema for the input parameters required to execute a Prometheus query.
 func (p *PrometheusQuery) Parameters() json.RawMessage {
 	return json.RawMessage(`{
         "type": "object",
@@ -53,6 +57,7 @@ func (p *PrometheusQuery) Parameters() json.RawMessage {
     }`)
 }
 
+// Execute performs the Prometheus query based on the provided parameters, handling HTTP communication and response parsing.
 func (p *PrometheusQuery) Execute(ctx context.Context, params json.RawMessage) (json.RawMessage, error) {
 	var input struct {
 		Query string `json:"query"`
@@ -80,7 +85,7 @@ func (p *PrometheusQuery) Execute(ctx context.Context, params json.RawMessage) (
 	}
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -89,13 +94,14 @@ func (p *PrometheusQuery) Execute(ctx context.Context, params json.RawMessage) (
 		req.Header.Set("X-Scope-OrgID", p.tenantID)
 	}
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.httpClient.Do(req) //nolint:gosec // G704 - endpoint is set at construction from config, not from tool params.
+	// LLM-controlled inputs (query, start, end, limit) are query-string encoded via url.Values.Set().
 	if err != nil {
 		return nil, fmt.Errorf("prometheus query failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20)) // 5 MB
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}

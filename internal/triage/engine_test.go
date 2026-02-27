@@ -25,6 +25,8 @@ type mockProvider struct {
 	callIdx   int
 }
 
+const claudeTestModel = "claude-sonnet-4-20250514"
+
 func (m *mockProvider) Send(_ context.Context, _ *LLMRequest) (*LLMResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -53,10 +55,12 @@ type mockTool struct {
 	err    error
 }
 
-func (m *mockTool) Name() string                                                          { return m.name }
-func (m *mockTool) Description() string                                                    { return "mock tool" }
-func (m *mockTool) Parameters() json.RawMessage                                            { return json.RawMessage(`{"type":"object"}`) }
-func (m *mockTool) Execute(_ context.Context, _ json.RawMessage) (json.RawMessage, error) { return m.output, m.err }
+func (m *mockTool) Name() string                { return m.name }
+func (m *mockTool) Description() string         { return "mock tool" }
+func (m *mockTool) Parameters() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (m *mockTool) Execute(_ context.Context, _ json.RawMessage) (json.RawMessage, error) {
+	return m.output, m.err
+}
 
 func testAlert() *alert.Alert {
 	return &alert.Alert{
@@ -81,7 +85,7 @@ func TestRun_SingleTurn(t *testing.T) {
 			Content:    []ContentBlock{{Type: "text", Text: "analysis: all good"}},
 			StopReason: StopEnd,
 			Usage:      Usage{InputTokens: 100, OutputTokens: 50},
-			Model:      "claude-sonnet-4-20250514",
+			Model:      claudeTestModel,
 		}},
 	}
 	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
@@ -115,8 +119,8 @@ func TestRun_SingleTurn(t *testing.T) {
 	if rr.SystemPrompt == "" {
 		t.Error("expected non-empty SystemPrompt")
 	}
-	if rr.Model != "claude-sonnet-4-20250514" {
-		t.Errorf("model = %q, want %q", rr.Model, "claude-sonnet-4-20250514")
+	if rr.Model != claudeTestModel {
+		t.Errorf("model = %q, want %q", rr.Model, claudeTestModel)
 	}
 	turn := rr.Conversation.Turns[0]
 	if turn.StopReason != string(StopEnd) {
@@ -125,8 +129,8 @@ func TestRun_SingleTurn(t *testing.T) {
 	if turn.Duration <= 0 {
 		t.Error("expected positive turn duration")
 	}
-	if turn.Model != "claude-sonnet-4-20250514" {
-		t.Errorf("turn model = %q, want %q", turn.Model, "claude-sonnet-4-20250514")
+	if turn.Model != claudeTestModel {
+		t.Errorf("turn model = %q, want %q", turn.Model, claudeTestModel)
 	}
 	if len(rr.ToolsUsed) != 0 {
 		t.Errorf("ToolsUsed = %v, want empty", rr.ToolsUsed)
@@ -336,7 +340,7 @@ func TestRun_MaxTokensLimit(t *testing.T) {
 		output: json.RawMessage(`"ok"`),
 	})
 
-	// Each call uses 30k tokens, so after 2 calls (60k) we exceed MaxTokens (50k)
+	// Each call uses 60k tokens, so after 2 calls (120k) we exceed MaxTokens (100k)
 	provider := &mockProvider{
 		responses: []*LLMResponse{
 			{
@@ -344,14 +348,14 @@ func TestRun_MaxTokensLimit(t *testing.T) {
 					{Type: "tool_use", ID: "call-1", Name: "token_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: StopToolUse,
-				Usage:      Usage{InputTokens: 15000, OutputTokens: 15000},
+				Usage:      Usage{InputTokens: 30000, OutputTokens: 30000},
 			},
 			{
 				Content: []ContentBlock{
 					{Type: "tool_use", ID: "call-2", Name: "token_tool", Input: json.RawMessage(`{}`)},
 				},
 				StopReason: StopToolUse,
-				Usage:      Usage{InputTokens: 15000, OutputTokens: 15000},
+				Usage:      Usage{InputTokens: 30000, OutputTokens: 30000},
 			},
 		},
 	}
@@ -523,14 +527,14 @@ func TestRun_HooksCalled(t *testing.T) {
 	}
 
 	var (
-		mu            sync.Mutex
-		llmCalls      int
-		totalTokensIn int
+		mu             sync.Mutex
+		llmCalls       int
+		totalTokensIn  int
 		totalTokensOut int
-		toolCalls     int
-		lastToolName  string
-		lastToolErr   bool
-		completeCalls int
+		toolCalls      int
+		lastToolName   string
+		lastToolErr    bool
+		completeCalls  int
 		completeStatus Status
 	)
 
@@ -549,7 +553,7 @@ func TestRun_HooksCalled(t *testing.T) {
 			lastToolName = name
 			lastToolErr = isErr
 		},
-		OnComplete: func(e CompleteEvent) {
+		OnComplete: func(e *CompleteEvent) {
 			mu.Lock()
 			defer mu.Unlock()
 			completeCalls++
@@ -593,7 +597,7 @@ func TestRun_HooksCalled(t *testing.T) {
 	}
 }
 
-func TestRun_CreatesSpans(t *testing.T) {
+func TestRun_CreatesSpans(t *testing.T) { //nolint:gocognit // its a complex test and not worth the time to break down
 	// Not parallel: swaps the global OTel tracer provider.
 
 	exporter := tracetest.NewInMemoryExporter()
@@ -618,13 +622,13 @@ func TestRun_CreatesSpans(t *testing.T) {
 				},
 				StopReason: StopToolUse,
 				Usage:      Usage{InputTokens: 100, OutputTokens: 50},
-				Model:      "claude-sonnet-4-20250514",
+				Model:      claudeTestModel,
 			},
 			{
 				Content:    []ContentBlock{{Type: "text", Text: "done"}},
 				StopReason: StopEnd,
 				Usage:      Usage{InputTokens: 200, OutputTokens: 80},
-				Model:      "claude-sonnet-4-20250514",
+				Model:      claudeTestModel,
 			},
 		},
 	}
@@ -664,7 +668,7 @@ func TestRun_CreatesSpans(t *testing.T) {
 		if v, ok := attrs["gen_ai.operation.name"]; !ok || v != "llm.call" {
 			t.Errorf("llm.call span missing gen_ai.operation.name=llm.call, got %v", v)
 		}
-		if v, ok := attrs["gen_ai.response.model"]; !ok || v != "claude-sonnet-4-20250514" {
+		if v, ok := attrs["gen_ai.response.model"]; !ok || v != claudeTestModel {
 			t.Errorf("llm.call span missing gen_ai.response.model, got %v", v)
 		}
 		if v, ok := attrs["vigil.triage.id"]; !ok || v != "test-triage-id" {

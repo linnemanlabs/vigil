@@ -10,12 +10,15 @@ import (
 	"github.com/linnemanlabs/vigil/internal/triage"
 )
 
+const textType = "text"
+const toolUseType = "tool_use"
+
 func TestToSDKMessages_TextBlock(t *testing.T) {
 	t.Parallel()
 
 	msgs := []triage.Message{{
 		Role:    "user",
-		Content: []triage.ContentBlock{{Type: "text", Text: "hello"}},
+		Content: []triage.ContentBlock{{Type: textType, Text: "hello"}},
 	}}
 
 	result := toSDKMessages(msgs)
@@ -43,7 +46,7 @@ func TestToSDKMessages_ToolUseBlock(t *testing.T) {
 	msgs := []triage.Message{{
 		Role: "assistant",
 		Content: []triage.ContentBlock{{
-			Type:  "tool_use",
+			Type:  toolUseType,
 			ID:    "tu-1",
 			Name:  "query_metrics",
 			Input: json.RawMessage(`{"query":"up"}`),
@@ -97,8 +100,8 @@ func TestToSDKMessages_MixedBlocks(t *testing.T) {
 	msgs := []triage.Message{{
 		Role: "assistant",
 		Content: []triage.ContentBlock{
-			{Type: "text", Text: "let me check"},
-			{Type: "tool_use", ID: "tu-2", Name: "query_metrics", Input: json.RawMessage(`{}`)},
+			{Type: textType, Text: "let me check"},
+			{Type: toolUseType, ID: "tu-2", Name: "query_metrics", Input: json.RawMessage(`{}`)},
 		},
 	}}
 
@@ -145,7 +148,7 @@ func TestFromSDKResponse_TextContent(t *testing.T) {
 
 	msg := &anthropic.Message{
 		Content: []anthropic.ContentBlockUnion{
-			{Type: "text", Text: "analysis result"},
+			{Type: textType, Text: "analysis result"},
 		},
 		StopReason: anthropic.StopReasonEndTurn,
 		Usage:      anthropic.Usage{InputTokens: 100, OutputTokens: 50},
@@ -156,8 +159,8 @@ func TestFromSDKResponse_TextContent(t *testing.T) {
 	if len(result.Content) != 1 {
 		t.Fatalf("content len = %d, want 1", len(result.Content))
 	}
-	if result.Content[0].Type != "text" {
-		t.Errorf("type = %q, want %q", result.Content[0].Type, "text")
+	if result.Content[0].Type != textType {
+		t.Errorf("type = %q, want %q", result.Content[0].Type, textType)
 	}
 	if result.Content[0].Text != "analysis result" {
 		t.Errorf("text = %q, want %q", result.Content[0].Text, "analysis result")
@@ -170,7 +173,7 @@ func TestFromSDKResponse_ToolUseContent(t *testing.T) {
 	msg := &anthropic.Message{
 		Content: []anthropic.ContentBlockUnion{
 			{
-				Type:  "tool_use",
+				Type:  toolUseType,
 				ID:    "tu-99",
 				Name:  "query_metrics",
 				Input: json.RawMessage(`{"query":"up"}`),
@@ -185,8 +188,8 @@ func TestFromSDKResponse_ToolUseContent(t *testing.T) {
 	if len(result.Content) != 1 {
 		t.Fatalf("content len = %d, want 1", len(result.Content))
 	}
-	if result.Content[0].Type != "tool_use" {
-		t.Errorf("type = %q, want %q", result.Content[0].Type, "tool_use")
+	if result.Content[0].Type != toolUseType {
+		t.Errorf("type = %q, want %q", result.Content[0].Type, toolUseType)
 	}
 	if result.Content[0].ID != "tu-99" {
 		t.Errorf("id = %q, want %q", result.Content[0].ID, "tu-99")
@@ -241,4 +244,39 @@ func TestFromSDKResponse_Usage(t *testing.T) {
 	if result.Usage.OutputTokens != 567 {
 		t.Errorf("output tokens = %d, want 567", result.Usage.OutputTokens)
 	}
+}
+
+func FuzzFromSDKResponse(f *testing.F) {
+	// Seeds: text content, tool_use content, unknown type, empty
+	f.Add("text", "", "analysis result", "", "", "end_turn", int64(100), int64(50))
+	f.Add("tool_use", "tu-1", "", "query_metrics", `{"query":"up"}`, toolUseType, int64(200), int64(100))
+	f.Add("text", "", "", "", "", "end_turn", int64(0), int64(0))
+	f.Add("unknown_type", "", "data", "", "", "max_tokens", int64(50), int64(25))
+	f.Add("text", "", "<@U123> *bold* \x00\x01\x02", "", "", "end_turn", int64(10), int64(5))
+
+	f.Fuzz(func(t *testing.T, blockType, id, text, name, inputJSON, stopReason string, tokensIn, tokensOut int64) {
+		block := anthropic.ContentBlockUnion{
+			Type:  blockType,
+			ID:    id,
+			Text:  text,
+			Name:  name,
+			Input: json.RawMessage(inputJSON),
+		}
+
+		msg := &anthropic.Message{
+			Content:    []anthropic.ContentBlockUnion{block},
+			StopReason: anthropic.StopReason(stopReason),
+			Usage:      anthropic.Usage{InputTokens: tokensIn, OutputTokens: tokensOut},
+		}
+
+		// Must not panic
+		result := fromSDKResponse(msg)
+
+		if result == nil {
+			t.Fatal("fromSDKResponse returned nil")
+		}
+		if len(result.Content) != 1 {
+			t.Fatalf("content len = %d, want 1", len(result.Content))
+		}
+	})
 }

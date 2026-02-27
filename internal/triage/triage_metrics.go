@@ -142,7 +142,7 @@ func (m *Metrics) Hooks() EngineHooks {
 			m.ToolInputBytes.WithLabelValues(name).Observe(float64(inputBytes))
 			m.ToolOutputBytes.WithLabelValues(name).Observe(float64(outputBytes))
 		},
-		OnComplete: func(e CompleteEvent) {
+		OnComplete: func(e *CompleteEvent) {
 			m.TriagesTotal.WithLabelValues(string(e.Status)).Inc()
 			m.TriageDuration.WithLabelValues(string(e.Status), e.Model).Observe(e.Duration)
 			m.TriageLLMTime.WithLabelValues(e.Model).Observe(e.LLMTime)

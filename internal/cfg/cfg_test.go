@@ -270,7 +270,7 @@ func TestValidate(t *testing.T) {
 func FuzzValidate(f *testing.F) {
 	// Seeds: defaults, boundaries, extremes
 	seeds := []struct {
-		drain, budget, port       int
+		drain, budget, port      int
 		promEndpoint, key, model string
 	}{
 		{60, 90, 8080, "http://localhost:9090", "sk-test", "claude-sonnet"},
