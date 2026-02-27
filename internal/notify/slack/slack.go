@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/linnemanlabs/go-core/log"
 	"github.com/linnemanlabs/vigil/internal/triage"
 )
 
@@ -24,13 +25,15 @@ const (
 type Notifier struct {
 	webhookURL string
 	client     *http.Client
+	logger     log.Logger
 }
 
 // New creates a new Slack notifier. If webhookURL is empty, Send is a no-op.
-func New(webhookURL string) *Notifier {
+func New(webhookURL string, logger log.Logger) *Notifier {
 	return &Notifier{
 		webhookURL: webhookURL,
 		client:     &http.Client{Timeout: httpTimeout},
+		logger:     logger,
 	}
 }
 
@@ -48,6 +51,8 @@ func (n *Notifier) Send(ctx context.Context, result *triage.Result) error {
 		return fmt.Errorf("slack: marshal message: %w", err)
 	}
 
+	n.logger.Debug(ctx, "slack webhook request", "body", string(body))
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.webhookURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("slack: create request: %w", err)
@@ -60,8 +65,10 @@ func (n *Notifier) Send(ctx context.Context, result *triage.Result) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	n.logger.Debug(ctx, "slack webhook response", "status_code", resp.StatusCode, "body", string(respBody))
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("slack: webhook returned %d: %s", resp.StatusCode, string(respBody))
 	}
 	return nil
