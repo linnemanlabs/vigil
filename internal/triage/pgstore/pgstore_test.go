@@ -42,6 +42,8 @@ func TestPutAndGet(t *testing.T) {
 		ToolsUsed:   []string{"query_logs", "query_metrics"},
 		CreatedAt:   now,
 		Duration:    1.23,
+		LLMTime:     0.85,
+		ToolTime:    0.38,
 		TokensUsed:  500,
 		ToolCalls:   3,
 	}
@@ -66,6 +68,8 @@ func TestPutAndGet(t *testing.T) {
 	assertEqual(t, "Summary", r.Summary, got.Summary)
 	assertEqual(t, "Analysis", r.Analysis, got.Analysis)
 	assertEqual(t, "Duration", r.Duration, got.Duration)
+	assertEqual(t, "LLMTime", r.LLMTime, got.LLMTime)
+	assertEqual(t, "ToolTime", r.ToolTime, got.ToolTime)
 	assertEqual(t, "TokensUsed", r.TokensUsed, got.TokensUsed)
 	assertEqual(t, "ToolCalls", r.ToolCalls, got.ToolCalls)
 
@@ -159,6 +163,8 @@ func TestUpsert(t *testing.T) {
 	r.Summary = "resolved"
 	r.CompletedAt = completed
 	r.Duration = 60.0
+	r.LLMTime = 45.0
+	r.ToolTime = 12.5
 	r.TokensUsed = 1200
 	r.ToolCalls = 5
 
@@ -177,6 +183,8 @@ func TestUpsert(t *testing.T) {
 	assertEqual(t, "Status", string(triage.StatusComplete), string(got.Status))
 	assertEqual(t, "Summary", "resolved", got.Summary)
 	assertEqual(t, "Duration", 60.0, got.Duration)
+	assertEqual(t, "LLMTime", 45.0, got.LLMTime)
+	assertEqual(t, "ToolTime", 12.5, got.ToolTime)
 	assertEqual(t, "TokensUsed", 1200, got.TokensUsed)
 	assertEqual(t, "ToolCalls", 5, got.ToolCalls)
 }

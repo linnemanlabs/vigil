@@ -33,6 +33,8 @@ type Result struct {
 	CreatedAt    time.Time     `json:"created_at"`
 	CompletedAt  time.Time     `json:"completed_at,omitempty"`
 	Duration     float64       `json:"duration_seconds,omitempty"`
+	LLMTime      float64       `json:"llm_time_seconds,omitempty"`
+	ToolTime     float64       `json:"tool_time_seconds,omitempty"`
 	TokensUsed   int           `json:"tokens_used,omitempty"`
 	ToolCalls    int           `json:"tool_calls,omitempty"`
 	SystemPrompt string        `json:"system_prompt,omitempty"`

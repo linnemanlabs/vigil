@@ -128,6 +128,9 @@ func TestRun_SingleTurn(t *testing.T) {
 	if len(rr.ToolsUsed) != 0 {
 		t.Errorf("ToolsUsed = %v, want empty", rr.ToolsUsed)
 	}
+	if rr.LLMTime <= 0 {
+		t.Error("expected positive LLMTime")
+	}
 }
 
 func TestRun_ToolUseLoop(t *testing.T) {
@@ -177,6 +180,12 @@ func TestRun_ToolUseLoop(t *testing.T) {
 	}
 	if len(rr.ToolsUsed) != 1 || rr.ToolsUsed[0] != "test_tool" {
 		t.Errorf("ToolsUsed = %v, want [test_tool]", rr.ToolsUsed)
+	}
+	if rr.LLMTime <= 0 {
+		t.Error("expected positive LLMTime")
+	}
+	if rr.ToolTime < 0 {
+		t.Error("expected non-negative ToolTime")
 	}
 }
 
@@ -534,11 +543,11 @@ func TestRun_HooksCalled(t *testing.T) {
 			lastToolName = name
 			lastToolErr = isErr
 		},
-		OnComplete: func(status Status, _ float64, _, _ int) {
+		OnComplete: func(e CompleteEvent) {
 			mu.Lock()
 			defer mu.Unlock()
 			completeCalls++
-			completeStatus = status
+			completeStatus = e.Status
 		},
 	}
 

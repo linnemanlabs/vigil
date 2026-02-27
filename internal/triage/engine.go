@@ -33,6 +33,8 @@ type RunResult struct {
 	Conversation     *Conversation
 	CompletedAt      time.Time
 	Duration         float64
+	LLMTime          float64
+	ToolTime         float64
 	TokensUsed       int
 	InputTokensUsed  int
 	OutputTokensUsed int
@@ -41,12 +43,23 @@ type RunResult struct {
 	Model            string
 }
 
+// CompleteEvent is passed to the OnComplete hook with per-triage aggregates.
+type CompleteEvent struct {
+	Status    Status
+	Duration  float64
+	LLMTime   float64
+	ToolTime  float64
+	Tokens    int
+	ToolCalls int
+	Model     string
+}
+
 // EngineHooks provides optional callbacks for instrumenting engine operations.
 // All fields are optional, nil callbacks are safely ignored.
 type EngineHooks struct {
 	OnLLMCall  func(inputTokens, outputTokens int, duration float64)
 	OnToolCall func(name string, duration float64, inputBytes, outputBytes int, isError bool)
-	OnComplete func(status Status, duration float64, tokens, toolCalls int)
+	OnComplete func(CompleteEvent)
 }
 
 func (h *EngineHooks) llmCall(in, out int, dur float64) {
@@ -61,9 +74,9 @@ func (h *EngineHooks) toolCall(name string, dur float64, inBytes, outBytes int, 
 	}
 }
 
-func (h *EngineHooks) complete(status Status, dur float64, tokens, calls int) {
+func (h *EngineHooks) complete(e CompleteEvent) {
 	if h.OnComplete != nil {
-		h.OnComplete(status, dur, tokens, calls)
+		h.OnComplete(e)
 	}
 }
 
@@ -107,6 +120,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 	conv := &Conversation{}
 	var totalInputTokens, totalOutputTokens int
 	var totalToolCalls int
+	var totalLLMTime, totalToolTime float64
 	var lastModel string
 	toolsUsedSet := make(map[string]struct{})
 
@@ -116,7 +130,10 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 		if totalToolCalls >= MaxToolRounds {
 			L.Warn(ctx, "triage hit tool call limit", "limit", MaxToolRounds)
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(StatusComplete, dur, totalInputTokens+totalOutputTokens, totalToolCalls)
+			e.hooks.complete(CompleteEvent{
+				Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
+				Tokens: totalInputTokens + totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
+			})
 			return &RunResult{
 				Status:           StatusComplete,
 				Analysis:         "Triage terminated: tool call budget exhausted",
@@ -124,6 +141,8 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 				Conversation:     conv,
 				CompletedAt:      time.Now(),
 				Duration:         dur,
+				LLMTime:          totalLLMTime,
+				ToolTime:         totalToolTime,
 				TokensUsed:       totalInputTokens + totalOutputTokens,
 				InputTokensUsed:  totalInputTokens,
 				OutputTokensUsed: totalOutputTokens,
@@ -135,7 +154,10 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 		if totalInputTokens+totalOutputTokens >= MaxTokens {
 			L.Warn(ctx, "triage hit token limit", "limit", MaxTokens)
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(StatusComplete, dur, totalInputTokens+totalOutputTokens, totalToolCalls)
+			e.hooks.complete(CompleteEvent{
+				Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
+				Tokens: totalInputTokens + totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
+			})
 			return &RunResult{
 				Status:           StatusComplete,
 				Analysis:         "Triage terminated: token budget exhausted",
@@ -143,6 +165,8 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 				Conversation:     conv,
 				CompletedAt:      time.Now(),
 				Duration:         dur,
+				LLMTime:          totalLLMTime,
+				ToolTime:         totalToolTime,
 				TokensUsed:       totalInputTokens + totalOutputTokens,
 				InputTokensUsed:  totalInputTokens,
 				OutputTokensUsed: totalOutputTokens,
@@ -176,7 +200,10 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 			llmSpan.End()
 			L.Error(ctx, err, "llm call failed")
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(StatusFailed, dur, totalInputTokens+totalOutputTokens, totalToolCalls)
+			e.hooks.complete(CompleteEvent{
+				Status: StatusFailed, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
+				Tokens: totalInputTokens + totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
+			})
 			return &RunResult{
 				Status:           StatusFailed,
 				Analysis:         fmt.Sprintf("LLM error: %v", err),
@@ -184,6 +211,8 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 				Conversation:     conv,
 				CompletedAt:      time.Now(),
 				Duration:         dur,
+				LLMTime:          totalLLMTime,
+				ToolTime:         totalToolTime,
 				TokensUsed:       totalInputTokens + totalOutputTokens,
 				InputTokensUsed:  totalInputTokens,
 				OutputTokensUsed: totalOutputTokens,
@@ -194,6 +223,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 		}
 
 		llmDur := time.Since(llmStart).Seconds()
+		totalLLMTime += llmDur
 		totalInputTokens += resp.Usage.InputTokens
 		totalOutputTokens += resp.Usage.OutputTokens
 		lastModel = resp.Model
@@ -210,6 +240,7 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 
 		L.Info(ctx, "llm response",
 			"stop_reason", resp.StopReason,
+			"duration", llmDur,
 			"input_tokens", resp.Usage.InputTokens,
 			"output_tokens", resp.Usage.OutputTokens,
 			"total_tokens", totalInputTokens+totalOutputTokens,
@@ -242,7 +273,10 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 				}
 			}
 			dur := time.Since(start).Seconds()
-			e.hooks.complete(StatusComplete, dur, totalInputTokens+totalOutputTokens, totalToolCalls)
+			e.hooks.complete(CompleteEvent{
+				Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
+				Tokens: totalInputTokens + totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
+			})
 			return &RunResult{
 				Status:           StatusComplete,
 				Analysis:         analysis,
@@ -250,6 +284,8 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 				Conversation:     conv,
 				CompletedAt:      time.Now(),
 				Duration:         dur,
+				LLMTime:          totalLLMTime,
+				ToolTime:         totalToolTime,
 				TokensUsed:       totalInputTokens + totalOutputTokens,
 				InputTokensUsed:  totalInputTokens,
 				OutputTokensUsed: totalOutputTokens,
@@ -261,8 +297,9 @@ func (e *Engine) Run(ctx context.Context, al *alert.Alert, onTurn TurnCallback) 
 
 		// handle tool calls
 		if resp.StopReason == StopToolUse {
-			toolResults, calls := e.executeToolCalls(ctx, L, resp.Content, toolsUsedSet)
+			toolResults, calls, batchToolDur := e.executeToolCalls(ctx, L, resp.Content, toolsUsedSet)
 			totalToolCalls += calls
+			totalToolTime += batchToolDur
 
 			// record tool results turn
 			conv.Turns = append(conv.Turns, Turn{
@@ -291,7 +328,7 @@ func notifyTurn(ctx context.Context, logger log.Logger, onTurn TurnCallback, con
 	}
 }
 
-func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, content []ContentBlock, seen map[string]struct{}) (results []ContentBlock, calls int) {
+func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, content []ContentBlock, seen map[string]struct{}) (results []ContentBlock, calls int, totalDur float64) {
 	for i := range content {
 		block := &content[i]
 		if block.Type != "tool_use" {
@@ -336,8 +373,10 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 
 		toolSpan.SetAttributes(attribute.Float64("vigil.tool.duration_s", toolDur))
 
+		totalDur += toolDur
+
 		if err != nil {
-			logger.Error(ctx, err, "tool execution failed", "tool", block.Name)
+			logger.Error(ctx, err, "tool execution failed", "tool", block.Name, "duration", toolDur)
 			toolSpan.SetAttributes(
 				attribute.Int("vigil.tool.output_bytes", 0),
 				attribute.Bool("vigil.tool.is_error", true),
@@ -363,6 +402,7 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 		)
 		toolSpan.End()
 
+		logger.Info(ctx, "tool complete", "tool", block.Name, "duration", toolDur)
 		e.hooks.toolCall(block.Name, toolDur, len(block.Input), len(output), false)
 		results = append(results, ContentBlock{
 			Type:      "tool_result",
@@ -371,7 +411,7 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 			Duration:  toolDur,
 		})
 	}
-	return results, calls
+	return results, calls, totalDur
 }
 
 func sortedKeys(m map[string]struct{}) []string {

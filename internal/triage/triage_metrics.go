@@ -5,7 +5,11 @@ import "github.com/prometheus/client_golang/prometheus"
 // Metrics holds Prometheus metrics for the triage subsystem.
 type Metrics struct {
 	TriagesTotal    *prometheus.CounterVec
-	TriageDuration  prometheus.Histogram
+	TriageDuration  *prometheus.HistogramVec
+	TriageLLMTime   *prometheus.HistogramVec
+	TriageToolTime  prometheus.Histogram
+	TriageTokens    prometheus.Histogram
+	TriageToolCalls prometheus.Histogram
 	LLMCallsTotal   prometheus.Counter
 	LLMTokensIn     prometheus.Counter
 	LLMTokensOut    prometheus.Counter
@@ -24,10 +28,30 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "vigil_triages_total",
 			Help: "Total triage runs by final status.",
 		}, []string{"status"}),
-		TriageDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+		TriageDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "vigil_triage_duration_seconds",
 			Help:    "Duration of triage runs in seconds.",
 			Buckets: prometheus.ExponentialBuckets(1, 2, 10), // 1s .. ~512s
+		}, []string{"status", "model"}),
+		TriageLLMTime: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "vigil_triage_llm_time_seconds",
+			Help:    "Total LLM time per triage run in seconds.",
+			Buckets: prometheus.ExponentialBuckets(1, 2, 10), // 1s .. ~512s
+		}, []string{"model"}),
+		TriageToolTime: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "vigil_triage_tool_time_seconds",
+			Help:    "Total tool execution time per triage run in seconds.",
+			Buckets: prometheus.ExponentialBuckets(0.5, 2, 10), // 0.5s .. ~256s
+		}),
+		TriageTokens: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "vigil_triage_tokens",
+			Help:    "Tokens consumed per triage run.",
+			Buckets: prometheus.ExponentialBuckets(100, 2, 12), // 100 .. ~409600
+		}),
+		TriageToolCalls: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "vigil_triage_tool_calls",
+			Help:    "Tool calls per triage run.",
+			Buckets: prometheus.LinearBuckets(0, 1, 16), // 0 .. 15
 		}),
 		LLMCallsTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "vigil_llm_calls_total",
@@ -74,6 +98,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	reg.MustRegister(
 		m.TriagesTotal,
 		m.TriageDuration,
+		m.TriageLLMTime,
+		m.TriageToolTime,
+		m.TriageTokens,
+		m.TriageToolCalls,
 		m.LLMCallsTotal,
 		m.LLMTokensIn,
 		m.LLMTokensOut,
@@ -107,9 +135,13 @@ func (m *Metrics) Hooks() EngineHooks {
 			m.ToolInputBytes.WithLabelValues(name).Observe(float64(inputBytes))
 			m.ToolOutputBytes.WithLabelValues(name).Observe(float64(outputBytes))
 		},
-		OnComplete: func(status Status, duration float64, _, _ int) {
-			m.TriagesTotal.WithLabelValues(string(status)).Inc()
-			m.TriageDuration.Observe(duration)
+		OnComplete: func(e CompleteEvent) {
+			m.TriagesTotal.WithLabelValues(string(e.Status)).Inc()
+			m.TriageDuration.WithLabelValues(string(e.Status), e.Model).Observe(e.Duration)
+			m.TriageLLMTime.WithLabelValues(e.Model).Observe(e.LLMTime)
+			m.TriageToolTime.Observe(e.ToolTime)
+			m.TriageTokens.Observe(float64(e.Tokens))
+			m.TriageToolCalls.Observe(float64(e.ToolCalls))
 		},
 	}
 }
