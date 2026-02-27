@@ -163,6 +163,7 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 		attribute.Int("gen_ai.usage.output_tokens", rr.OutputTokensUsed),
 		attribute.String("vigil.triage.status", string(rr.Status)),
 		attribute.Int("vigil.triage.tool_calls", rr.ToolCalls),
+		attribute.String("vigil.triage.system_prompt", rr.SystemPrompt),
 	)
 	if rr.Status == StatusFailed {
 		triageSpan.SetStatus(codes.Error, rr.Analysis)
@@ -170,6 +171,8 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 
 	if err := s.notifier.Send(ctx, result); err != nil {
 		L.Warn(ctx, "notification failed", "err", err)
+	} else if _, nop := s.notifier.(nopNotifier); nop {
+		L.Debug(ctx, "notification skipped, no notifier configured")
 	} else {
 		L.Info(ctx, "notification sent", "triage_id", id)
 	}

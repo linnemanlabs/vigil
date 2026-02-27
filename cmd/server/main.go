@@ -156,6 +156,7 @@ func run() error {
 		"include_error_links", logCfg.IncludeErrorLinks,
 		"max_error_links", logCfg.MaxErrorLinks,
 		"trusted_proxy_hops", httpmwCfg.TrustedProxyHops,
+		"log_level", logCfg.Level,
 	)
 
 	// Setup pyroscope profiling early so we get profiles from the entire app lifetime
@@ -272,6 +273,8 @@ func run() error {
 	if appCfg.SlackWebhookURL != "" {
 		notifier = slack.New(appCfg.SlackWebhookURL, L)
 		L.Info(ctx, "notifier enabled", "type", "slack")
+	} else {
+		L.Warn(ctx, "no notifier configured, notifications will be silently dropped")
 	}
 
 	// Initialize the triage service (owns dedup, lifecycle, async dispatch).
