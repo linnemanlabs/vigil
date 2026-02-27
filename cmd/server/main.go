@@ -36,6 +36,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/linnemanlabs/vigil/internal/alertapi"
+	"github.com/linnemanlabs/vigil/internal/authmw"
 	vc "github.com/linnemanlabs/vigil/internal/cfg"
 	"github.com/linnemanlabs/vigil/internal/llm/claude"
 	"github.com/linnemanlabs/vigil/internal/notify/slack"
@@ -354,9 +355,12 @@ func run() error { //nolint:gocognit // cognit of 37 is reasonable for now can s
 	r.Get("/-/healthy", health.HealthzHandler(liveness))
 	r.Get("/-/ready", health.ReadyzHandler(readiness))
 
-	// register api routes
+	// register api routes behind bearer token auth
 	alertapiHTTP := alertapi.New(L, triageSvc)
-	alertapiHTTP.RegisterRoutes(r)
+	r.Group(func(r chi.Router) {
+		r.Use(authmw.BearerToken(appCfg.APIToken))
+		alertapiHTTP.RegisterRoutes(r)
+	})
 
 	// middleware stack for main listener, order matters these are wrappers, outermost sees raw request
 	// first and is last to see response, innermost is last to see request and first to see response but

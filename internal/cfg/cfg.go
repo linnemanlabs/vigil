@@ -16,10 +16,11 @@ type Config struct {
 	PrometheusTenantID    string
 	LokiEndpoint          string
 	LokiTenantID          string
-	ClaudeAPIKey          string
+	ClaudeAPIKey          string `json:"-"`
 	ClaudeModel           string
-	DatabaseURL           string
-	SlackWebhookURL       string
+	DatabaseURL           string `json:"-"`
+	SlackWebhookURL       string `json:"-"`
+	APIToken              string `json:"-"`
 }
 
 // RegisterFlags binds Config fields to the given FlagSet with defaults inline
@@ -35,6 +36,7 @@ func (c *Config) RegisterFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.LokiEndpoint, "loki-endpoint", "", "Loki endpoint for log collection by tool use")
 	fs.StringVar(&c.LokiTenantID, "loki-tenant-id", "", "Loki tenant ID for multi-tenant setups")
 	fs.StringVar(&c.SlackWebhookURL, "slack-webhook-url", "", "Slack webhook URL for notifications")
+	fs.StringVar(&c.APIToken, "api-token", "", "Bearer token required for API authentication")
 }
 
 // Validate checks all configuration fields for correctness.
@@ -63,6 +65,11 @@ func (c *Config) Validate() error {
 	// Prometheus endpoint is required for metrics collection by tools
 	if c.PrometheusEndpoint == "" {
 		errs = append(errs, errors.New("PROMETHEUS_ENDPOINT is required"))
+	}
+
+	// API token is required for authentication
+	if c.APIToken == "" {
+		errs = append(errs, errors.New("API_TOKEN is required"))
 	}
 
 	// Claude API key is required for LLM access

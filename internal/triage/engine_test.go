@@ -331,7 +331,7 @@ func TestRun_MaxToolRoundsLimit(t *testing.T) {
 	}
 }
 
-func TestRun_MaxInputTokensLimit(t *testing.T) {
+func TestRun_MaxInputTokensLimit(t *testing.T) { //nolint:dupl // intentionally similar to TestRun_MaxOutputTokensLimit but exercises a different code path
 	t.Parallel()
 
 	registry := tools.NewRegistry()
@@ -371,7 +371,7 @@ func TestRun_MaxInputTokensLimit(t *testing.T) {
 	}
 }
 
-func TestRun_MaxOutputTokensLimit(t *testing.T) {
+func TestRun_MaxOutputTokensLimit(t *testing.T) { //nolint:dupl // intentionally similar to TestRun_MaxInputTokensLimit but exercises a different code path
 	t.Parallel()
 
 	registry := tools.NewRegistry()
