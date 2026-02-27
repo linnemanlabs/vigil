@@ -184,20 +184,24 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 
 		// call LLM provider with current conversation
 		llmStart := time.Now()
-		ctx, llmSpan := tracer.Start(ctx, "chat", trace.WithAttributes(
-			attribute.String("gen_ai.operation.name", "chat"),
+		req := &LLMRequest{
+			MaxTokens: ResponseTokens,
+			System:    systemPrompt,
+			Messages:  messages,
+			Tools:     toolDefs,
+		}
+		llmCtx, llmSpan := tracer.Start(ctx, "llm.call", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
+			attribute.String("gen_ai.operation.name", "llm.call"),
 			attribute.String("gen_ai.provider.name", "anthropic"),
 			attribute.Int("gen_ai.request.max_tokens", ResponseTokens),
 			attribute.String("vigil.triage.id", triageID),
 			attribute.String("vigil.alert.fingerprint", al.Fingerprint),
 			attribute.Int("vigil.chat.seq", chatSeq),
 		))
-		resp, err := e.provider.Send(ctx, &LLMRequest{
-			MaxTokens: ResponseTokens,
-			System:    systemPrompt,
-			Messages:  messages,
-			Tools:     toolDefs,
-		})
+		llmSpan.AddEvent("llm.request", trace.WithAttributes(
+			attribute.String("llm.request.body", marshalMessages(req.Messages)),
+		))
+		resp, err := e.provider.Send(llmCtx, req)
 		if err != nil {
 			llmSpan.RecordError(err)
 			llmSpan.SetStatus(codes.Error, err.Error())
@@ -226,6 +230,10 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 			}
 		}
 
+		llmSpan.AddEvent("llm.response", trace.WithAttributes(
+			attribute.String("llm.response.body", marshalContent(resp.Content)),
+		))
+
 		llmDur := time.Since(llmStart).Seconds()
 		totalLLMTime += llmDur
 		totalInputTokens += resp.Usage.InputTokens
@@ -240,6 +248,7 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 			attribute.Int("gen_ai.usage.output_tokens", resp.Usage.OutputTokens),
 			attribute.StringSlice("gen_ai.response.finish_reasons", []string{string(resp.StopReason)}),
 		)
+		llmSpan.SetStatus(codes.Ok, "")
 		llmSpan.End()
 		chatSeq++
 
@@ -346,14 +355,20 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 
 		tool, ok := e.registry.Get(block.Name)
 		if !ok {
-			_, toolSpan := tracer.Start(ctx, "execute_tool", trace.WithAttributes(
-				attribute.String("gen_ai.operation.name", "execute_tool"),
+			_, toolSpan := tracer.Start(ctx, "tool.execute", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
+				attribute.String("gen_ai.operation.name", "tool.execute"),
 				attribute.String("gen_ai.tool.name", block.Name),
 				attribute.String("gen_ai.tool.call.id", block.ID),
 				attribute.Bool("vigil.tool.is_error", true),
 				attribute.String("vigil.triage.id", triageID),
 				attribute.String("vigil.alert.fingerprint", fingerprint),
 				attribute.String("vigil.tool.input", truncateSpanField(string(block.Input), 1024)),
+			))
+			toolSpan.AddEvent("tool.request", trace.WithAttributes(
+				attribute.String("tool.request.body", string(block.Input)),
+			))
+			toolSpan.AddEvent("tool.result", trace.WithAttributes(
+				attribute.String("tool.result.body", fmt.Sprintf("unknown tool: %s", block.Name)),
 			))
 			toolSpan.SetStatus(codes.Error, "unknown tool")
 			toolSpan.End()
@@ -368,14 +383,18 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 			continue
 		}
 
-		toolCtx, toolSpan := tracer.Start(ctx, "execute_tool", trace.WithAttributes(
-			attribute.String("gen_ai.operation.name", "execute_tool"),
+		toolCtx, toolSpan := tracer.Start(ctx, "tool.execute", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
+			attribute.String("gen_ai.operation.name", "tool.execute"),
 			attribute.String("gen_ai.tool.name", block.Name),
 			attribute.String("gen_ai.tool.call.id", block.ID),
 			attribute.Int("vigil.tool.input_bytes", len(block.Input)),
 			attribute.String("vigil.triage.id", triageID),
 			attribute.String("vigil.alert.fingerprint", fingerprint),
 			attribute.String("vigil.tool.input", truncateSpanField(string(block.Input), 1024)),
+		))
+
+		toolSpan.AddEvent("tool.request", trace.WithAttributes(
+			attribute.String("tool.request.body", string(block.Input)),
 		))
 
 		toolStart := time.Now()
@@ -388,6 +407,9 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 
 		if err != nil {
 			logger.Error(ctx, err, "tool execution failed", "tool", block.Name, "duration", toolDur)
+			toolSpan.AddEvent("tool.result", trace.WithAttributes(
+				attribute.String("tool.result.body", err.Error()),
+			))
 			toolSpan.SetAttributes(
 				attribute.Int("vigil.tool.output_bytes", 0),
 				attribute.Bool("vigil.tool.is_error", true),
@@ -407,10 +429,14 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 			continue
 		}
 
+		toolSpan.AddEvent("tool.result", trace.WithAttributes(
+			attribute.String("tool.result.body", string(output)),
+		))
 		toolSpan.SetAttributes(
 			attribute.Int("vigil.tool.output_bytes", len(output)),
 			attribute.Bool("vigil.tool.is_error", false),
 		)
+		toolSpan.SetStatus(codes.Ok, "")
 		toolSpan.End()
 
 		logger.Info(ctx, "tool complete", "tool", block.Name, "duration", toolDur)
@@ -439,6 +465,16 @@ func truncateSpanField(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+func marshalMessages(msgs []Message) string {
+	b, _ := json.Marshal(msgs)
+	return string(b)
+}
+
+func marshalContent(blocks []ContentBlock) string {
+	b, _ := json.Marshal(blocks)
+	return string(b)
 }
 
 // buildSystemPrompt constructs the system prompt for the LLM.

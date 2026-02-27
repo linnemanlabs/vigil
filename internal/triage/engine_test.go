@@ -638,49 +638,65 @@ func TestRun_CreatesSpans(t *testing.T) {
 		counts[s.Name]++
 	}
 
-	if counts["chat"] != 2 {
-		t.Errorf("chat spans = %d, want 2", counts["chat"])
+	if counts["llm.call"] != 2 {
+		t.Errorf("llm.call spans = %d, want 2", counts["llm.call"])
 	}
-	if counts["execute_tool"] != 1 {
-		t.Errorf("execute_tool spans = %d, want 1", counts["execute_tool"])
+	if counts["tool.execute"] != 1 {
+		t.Errorf("tool.execute spans = %d, want 1", counts["tool.execute"])
 	}
 
-	// Verify key attributes on chat spans.
+	// Verify key attributes and events on llm.call spans.
 	var chatSpanIdx int
 	for _, s := range spans {
-		if s.Name != "chat" {
+		if s.Name != "llm.call" {
 			continue
 		}
 		attrs := make(map[string]any)
 		for _, a := range s.Attributes {
 			attrs[string(a.Key)] = a.Value.AsInterface()
 		}
-		if v, ok := attrs["gen_ai.operation.name"]; !ok || v != "chat" {
-			t.Errorf("chat span missing gen_ai.operation.name=chat, got %v", v)
+		if v, ok := attrs["gen_ai.operation.name"]; !ok || v != "llm.call" {
+			t.Errorf("llm.call span missing gen_ai.operation.name=llm.call, got %v", v)
 		}
 		if v, ok := attrs["gen_ai.response.model"]; !ok || v != "claude-sonnet-4-20250514" {
-			t.Errorf("chat span missing gen_ai.response.model, got %v", v)
+			t.Errorf("llm.call span missing gen_ai.response.model, got %v", v)
 		}
 		if v, ok := attrs["vigil.triage.id"]; !ok || v != "test-triage-id" {
-			t.Errorf("chat span vigil.triage.id = %v, want test-triage-id", v)
+			t.Errorf("llm.call span vigil.triage.id = %v, want test-triage-id", v)
 		}
 		if v, ok := attrs["vigil.alert.fingerprint"]; !ok || v != "fp-test" {
-			t.Errorf("chat span vigil.alert.fingerprint = %v, want fp-test", v)
+			t.Errorf("llm.call span vigil.alert.fingerprint = %v, want fp-test", v)
 		}
 		if v, ok := attrs["vigil.chat.seq"]; !ok || v != int64(chatSpanIdx) {
-			t.Errorf("chat span vigil.chat.seq = %v, want %d", v, chatSpanIdx)
+			t.Errorf("llm.call span vigil.chat.seq = %v, want %d", v, chatSpanIdx)
 		}
+
+		// Verify llm.request and llm.response events.
+		eventNames := make(map[string]bool)
+		for _, ev := range s.Events {
+			eventNames[ev.Name] = true
+		}
+		if !eventNames["llm.request"] {
+			t.Errorf("llm.call span[%d] missing llm.request event", chatSpanIdx)
+		}
+		if !eventNames["llm.response"] {
+			t.Errorf("llm.call span[%d] missing llm.response event", chatSpanIdx)
+		}
+
 		chatSpanIdx++
 	}
 
-	// Verify tool span attributes.
+	// Verify tool span attributes and events.
 	for _, s := range spans {
-		if s.Name != "execute_tool" {
+		if s.Name != "tool.execute" {
 			continue
 		}
 		attrs := make(map[string]any)
 		for _, a := range s.Attributes {
 			attrs[string(a.Key)] = a.Value.AsInterface()
+		}
+		if v, ok := attrs["gen_ai.operation.name"]; !ok || v != "tool.execute" {
+			t.Errorf("tool span gen_ai.operation.name = %v, want tool.execute", v)
 		}
 		if v, ok := attrs["gen_ai.tool.name"]; !ok || v != "span_tool" {
 			t.Errorf("tool span missing gen_ai.tool.name=span_tool, got %v", v)
@@ -693,6 +709,26 @@ func TestRun_CreatesSpans(t *testing.T) {
 		}
 		if v, ok := attrs["vigil.tool.input"]; !ok || v != `{"q":"x"}` {
 			t.Errorf("tool span vigil.tool.input = %v, want {\"q\":\"x\"}", v)
+		}
+
+		// Verify tool.request and tool.result events.
+		eventNames := make(map[string]map[string]string)
+		for _, ev := range s.Events {
+			evAttrs := make(map[string]string)
+			for _, a := range ev.Attributes {
+				evAttrs[string(a.Key)] = a.Value.AsString()
+			}
+			eventNames[ev.Name] = evAttrs
+		}
+		if reqAttrs, ok := eventNames["tool.request"]; !ok {
+			t.Error("tool.execute span missing tool.request event")
+		} else if reqAttrs["tool.request.body"] != `{"q":"x"}` {
+			t.Errorf("tool.request body = %q, want %q", reqAttrs["tool.request.body"], `{"q":"x"}`)
+		}
+		if resAttrs, ok := eventNames["tool.result"]; !ok {
+			t.Error("tool.execute span missing tool.result event")
+		} else if resAttrs["tool.result.body"] != `{"ok":true}` {
+			t.Errorf("tool.result body = %q, want %q", resAttrs["tool.result.body"], `{"ok":true}`)
 		}
 		break
 	}
