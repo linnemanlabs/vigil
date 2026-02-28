@@ -139,12 +139,17 @@ Vigil implements a graceful shutdown sequence:
 **Rate limiting**
 - Per-IP, per-API-key, per-LLM-provider, per-tool, and system-wide rate limits
 
+**Two-tier evaluation**
+- Haiku-powered pre-triage gate that runs a lightweight eval loop (2-3 tool calls) to classify alerts as TRIAGE, IGNORE, or AUTO_RESOLVE before committing to a full Sonnet/Opus triage
+- Same engine loop, smaller tool budget, different system prompt - reuses existing architecture
+- Reduces average per-alert cost ~80% by filtering noise before expensive triage runs
+
 **Broader triage sources**
 - Accept triage requests beyond Alertmanager - slow database queries, slow HTTP requests, anomaly detectors
 - Slack-triggered triage (`@vigil triage`) instead of only webhook-driven
 
 **More investigation tools**
-- Tempo traces - query distributed traces for correlated spans
+- Tempo traces - query correlated spans for more context into individual traces
 - Pyroscope profiles - pull CPU/memory profiles for the affected service and time window; compare across time windows to surface performance regressions
 - Runbooks as callable tools - the LLM can follow documented remediation steps
 - Safe shell commands - pre-defined, allowlisted commands the LLM can execute securely
@@ -155,7 +160,7 @@ Vigil implements a graceful shutdown sequence:
 
 **Model selection**
 - Support multiple LLM providers (not just Claude)
-- Route to model based on alert severity or allow caller to specify via API
+- Route to model based on alert severity or allow caller to specify via API, or two-tier eval can suggest model
 
 **Prompt & tool evaluation**
 - Log full conversation histories and replay them against updated prompts to measure improvement
