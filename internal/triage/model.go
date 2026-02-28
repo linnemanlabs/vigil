@@ -15,9 +15,30 @@ const (
 	// StatusComplete means finished successfully
 	StatusComplete Status = "complete"
 
-	// StatusFailed means finished with errors
+	// StatusFailed means finished with LLM provider errors
 	StatusFailed Status = "failed"
+
+	// StatusError means finished with infrastructure/store errors during orchestration
+	StatusError Status = "error"
+
+	// StatusMaxTurns means the triage hit the MaxToolRounds limit
+	StatusMaxTurns Status = "max_turns"
+
+	// StatusBudgetExceeded means the triage hit input or output token limits
+	StatusBudgetExceeded Status = "budget_exceeded"
 )
+
+// IsTerminal reports whether the status represents a final state.
+func (s Status) IsTerminal() bool {
+	switch s {
+	case StatusComplete, StatusFailed, StatusError, StatusMaxTurns, StatusBudgetExceeded:
+		return true
+	case StatusPending, StatusInProgress:
+		return false
+	default:
+		return false
+	}
+}
 
 // Result is the outcome of a triage run.
 type Result struct {

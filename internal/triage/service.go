@@ -130,6 +130,7 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 		L.Error(ctx, err, "failed to fetch result for triage")
 		triageSpan.RecordError(err)
 		triageSpan.SetStatus(codes.Error, "failed to fetch result")
+		s.persistError(ctx, L, id, al.Fingerprint)
 		return
 	}
 
@@ -138,6 +139,7 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 		L.Error(ctx, err, "failed to update status to in_progress")
 		triageSpan.RecordError(err)
 		triageSpan.SetStatus(codes.Error, "failed to update status")
+		s.persistError(ctx, L, id, al.Fingerprint)
 		return
 	}
 
@@ -168,7 +170,7 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 		attribute.Int("vigil.triage.tool_calls", rr.ToolCalls),
 		attribute.String("vigil.triage.system_prompt", rr.SystemPrompt),
 	)
-	if rr.Status == StatusFailed {
+	if rr.Status == StatusFailed || rr.Status == StatusError {
 		triageSpan.SetStatus(codes.Error, rr.Analysis)
 	} else {
 		triageSpan.SetStatus(codes.Ok, "")
@@ -237,5 +239,19 @@ func (s *Service) buildOnTurn(ctx context.Context, triageID string) TurnCallback
 
 		lastAssistantTurn = nil
 		return nil
+	}
+}
+
+// persistError attempts to set a triage result to StatusError. This is
+// best-effort: if the store write fails we log and move on.
+func (s *Service) persistError(ctx context.Context, logger log.Logger, id, fingerprint string) {
+	r := &Result{
+		ID:          id,
+		Fingerprint: fingerprint,
+		Status:      StatusError,
+		CompletedAt: time.Now(),
+	}
+	if err := s.store.Put(ctx, r); err != nil {
+		logger.Warn(ctx, "failed to persist error status", "err", err)
 	}
 }

@@ -320,8 +320,8 @@ func TestRun_MaxToolRoundsLimit(t *testing.T) {
 
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
-	if rr.Status != StatusComplete {
-		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
+	if rr.Status != StatusMaxTurns {
+		t.Errorf("status = %q, want %q", rr.Status, StatusMaxTurns)
 	}
 	if !strings.Contains(rr.Analysis, "tool call budget") {
 		t.Errorf("analysis = %q, want it to mention tool call budget", rr.Analysis)
@@ -363,8 +363,8 @@ func TestRun_MaxInputTokensLimit(t *testing.T) { //nolint:dupl // intentionally 
 
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
-	if rr.Status != StatusComplete {
-		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
+	if rr.Status != StatusBudgetExceeded {
+		t.Errorf("status = %q, want %q", rr.Status, StatusBudgetExceeded)
 	}
 	if !strings.Contains(rr.Analysis, "input token budget") {
 		t.Errorf("analysis = %q, want it to mention input token budget", rr.Analysis)
@@ -403,8 +403,8 @@ func TestRun_MaxOutputTokensLimit(t *testing.T) { //nolint:dupl // intentionally
 
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
-	if rr.Status != StatusComplete {
-		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
+	if rr.Status != StatusBudgetExceeded {
+		t.Errorf("status = %q, want %q", rr.Status, StatusBudgetExceeded)
 	}
 	if !strings.Contains(rr.Analysis, "output token budget") {
 		t.Errorf("analysis = %q, want it to mention output token budget", rr.Analysis)

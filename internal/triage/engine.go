@@ -137,14 +137,14 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 
 	systemPrompt := buildSystemPrompt(al)
 
-	budgetResult := func(analysis string) *RunResult {
+	budgetResult := func(status Status, analysis string) *RunResult {
 		dur := time.Since(start).Seconds()
 		e.hooks.complete(&CompleteEvent{
-			Status: StatusComplete, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
+			Status: status, Duration: dur, LLMTime: totalLLMTime, ToolTime: totalToolTime,
 			TokensIn: totalInputTokens, TokensOut: totalOutputTokens, ToolCalls: totalToolCalls, Model: lastModel,
 		})
 		return &RunResult{
-			Status:           StatusComplete,
+			Status:           status,
 			Analysis:         analysis,
 			ToolsUsed:        sortedKeys(toolsUsedSet),
 			Conversation:     conv,
@@ -163,15 +163,15 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 	for {
 		if totalToolCalls >= MaxToolRounds {
 			L.Warn(ctx, "triage hit tool call limit", "limit", MaxToolRounds)
-			return budgetResult("Triage terminated: tool call budget exhausted")
+			return budgetResult(StatusMaxTurns, "Triage terminated: tool call budget exhausted")
 		}
 		if totalInputTokens >= MaxInputTokens {
 			L.Warn(ctx, "triage hit input token limit", "limit", MaxInputTokens, "used", totalInputTokens)
-			return budgetResult("Triage terminated: input token budget exhausted")
+			return budgetResult(StatusBudgetExceeded, "Triage terminated: input token budget exhausted")
 		}
 		if totalOutputTokens >= MaxOutputTokens {
 			L.Warn(ctx, "triage hit output token limit", "limit", MaxOutputTokens, "used", totalOutputTokens)
-			return budgetResult("Triage terminated: output token budget exhausted")
+			return budgetResult(StatusBudgetExceeded, "Triage terminated: output token budget exhausted")
 		}
 
 		var toolDefs []tools.ToolDef

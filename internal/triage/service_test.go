@@ -183,37 +183,44 @@ func TestSubmit_DedupInProgress(t *testing.T) {
 	}
 }
 
-func TestSubmit_AllowsRetriageCompleted(t *testing.T) {
+func TestSubmit_AllowsRetriageTerminalStatuses(t *testing.T) {
 	t.Parallel()
 
-	store := newMockStore()
-	store.seen["fp-done"] = &Result{ID: "old", Fingerprint: "fp-done", Status: StatusComplete}
-	store.results["old"] = store.seen["fp-done"]
+	for _, status := range []Status{StatusComplete, StatusFailed, StatusError, StatusMaxTurns, StatusBudgetExceeded} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Parallel()
 
-	provider := &mockProvider{
-		responses: []*LLMResponse{{
-			Content:    []ContentBlock{{Type: "text", Text: "re-analysis"}},
-			StopReason: StopEnd,
-			Usage:      Usage{InputTokens: 10, OutputTokens: 5},
-		}},
-	}
-	engine := NewEngine(provider, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
-	svc := NewService(store, engine, log.Nop(), nil, nil, noop.NewTracerProvider())
+			fp := "fp-" + string(status)
+			store := newMockStore()
+			store.seen[fp] = &Result{ID: "old", Fingerprint: fp, Status: status}
+			store.results["old"] = store.seen[fp]
 
-	sr, err := svc.Submit(context.Background(), &alert.Alert{
-		Status:      "firing",
-		Fingerprint: "fp-done",
-		Labels:      map[string]string{"alertname": "Retriage"},
-		Annotations: map[string]string{},
-	})
-	if err != nil {
-		t.Fatalf("Submit: %v", err)
-	}
-	if sr.Skipped {
-		t.Error("expected completed fingerprint to allow retriage")
-	}
-	if sr.ID == "" {
-		t.Error("expected non-empty ID")
+			provider := &mockProvider{
+				responses: []*LLMResponse{{
+					Content:    []ContentBlock{{Type: "text", Text: "re-analysis"}},
+					StopReason: StopEnd,
+					Usage:      Usage{InputTokens: 10, OutputTokens: 5},
+				}},
+			}
+			engine := NewEngine(provider, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
+			svc := NewService(store, engine, log.Nop(), nil, nil, noop.NewTracerProvider())
+
+			sr, err := svc.Submit(context.Background(), &alert.Alert{
+				Status:      "firing",
+				Fingerprint: fp,
+				Labels:      map[string]string{"alertname": "Retriage"},
+				Annotations: map[string]string{},
+			})
+			if err != nil {
+				t.Fatalf("Submit: %v", err)
+			}
+			if sr.Skipped {
+				t.Errorf("expected %s fingerprint to allow retriage", status)
+			}
+			if sr.ID == "" {
+				t.Error("expected non-empty ID")
+			}
+		})
 	}
 }
 
@@ -300,7 +307,7 @@ func TestSubmit_AsyncTriageCompletes(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		r, ok, _ := store.Get(context.Background(), sr.ID)
-		if ok && (r.Status == StatusComplete || r.Status == StatusFailed) {
+		if ok && r.Status.IsTerminal() {
 			if r.Analysis != "done analyzing" {
 				t.Errorf("analysis = %q, want %q", r.Analysis, "done analyzing")
 			}
@@ -391,7 +398,7 @@ func TestSubmit_NotifierErrorDoesNotFail(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		r, ok, _ := store.Get(context.Background(), sr.ID)
-		if ok && (r.Status == StatusComplete || r.Status == StatusFailed) {
+		if ok && r.Status.IsTerminal() {
 			completed.Store(true)
 			if r.Status != StatusComplete {
 				t.Errorf("status = %q, want %q", r.Status, StatusComplete)
