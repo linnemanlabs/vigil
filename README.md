@@ -91,7 +91,7 @@ All flags can be set via environment variables with a `VIGIL_` prefix (e.g., `VI
 ## Development
 
 ```bash
-make build    # compile to ./server
+make build    # compile to ./vigil-server
 make test     # go test -race -count=1 ./...
 make fuzz     # go test -fuzz=<func> -fuzztime=30s <package>
 make lint     # golangci-lint (47 linters)
