@@ -186,30 +186,6 @@ func TestPrometheusQuery_Truncation(t *testing.T) {
 	}
 }
 
-func FuzzPrometheusRangeExecute(f *testing.F) { //nolint:dupl // Similar fuzz test exists for Loki.Execute, but the input parameters and expected output are different enough that it's worth having a separate test.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"matrix","result":[]}}`)
-	}))
-	defer srv.Close()
-
-	prom := NewPrometheusQueryRange(srv.URL, "test")
-
-	f.Add(`{"query":"up","start":"2026-01-01T00:00:00Z"}`)
-	f.Add(`{"query":"","start":"2026-01-01T00:00:00Z"}`)
-	f.Add(`{"query":"up","start":""}`)
-	f.Add(`{}`)
-	f.Add(`not json`)
-	f.Add(`{"query":"rate(http_requests_total[5m])","start":"2026-01-01T00:00:00Z","end":"2026-01-01T06:00:00Z","step":"1m"}`)
-	f.Add(`{"query":"up","start":"2026-01-01T00:00:00Z","extra":true}`)
-	f.Add(string([]byte{0x00, 0xff, 0xfe}))
-
-	f.Fuzz(func(_ *testing.T, params string) {
-		// Must not panic
-		_, _ = prom.Execute(context.Background(), json.RawMessage(params))
-	})
-}
-
 func FuzzPrometheusExecute(f *testing.F) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

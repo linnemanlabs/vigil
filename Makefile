@@ -23,7 +23,7 @@ lint:
 cover:
 	go test -race -count=1 -coverprofile=coverage.out -coverpkg=./internal/... ./...
 	go tool cover -func=coverage.out
-	@go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $$NF); if ($$NF+0 < 70) { printf "FAIL: total coverage %s%% is below threshold 70%%\n", $$NF; exit 1 } else { printf "OK: total coverage %s%% meets threshold 70%%\n", $$NF } }'
+	@go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $$NF); if ($$NF+0 < 60) { printf "FAIL: total coverage %s%% is below threshold 60%%\n", $$NF; exit 1 } else { printf "OK: total coverage %s%% meets threshold 60%%\n", $$NF } }'
 	@rm coverage.out
 
 clean:

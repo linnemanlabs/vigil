@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -178,9 +179,9 @@ func run() error { //nolint:gocognit // cognit of 37 is reasonable for now can s
 	if profErr != nil {
 		L.Error(ctx, profErr, "pyroscope start failed", "pyro_server", profCfg.PyroServer)
 	}
-	if stopProf != nil {
-		defer stopProf()
-	}
+	var stopProfOnce sync.Once
+	callStopProf := func() { stopProfOnce.Do(stopProf) }
+	defer callStopProf()
 
 	// Setup otel for tracing
 	traceOpts := traceCfg.ToOptions()
@@ -480,7 +481,7 @@ func run() error { //nolint:gocognit // cognit of 37 is reasonable for now can s
 		ccancel()
 	}
 
-	stopProf()
+	callStopProf()
 
 	L.Info(context.Background(), "shutdown complete")
 	return nil

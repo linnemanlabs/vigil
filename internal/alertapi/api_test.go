@@ -3,6 +3,7 @@ package alertapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -432,6 +433,69 @@ func TestHandleGetTriage_NotFound(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestHandleGetTriage_StoreError(t *testing.T) {
+	t.Parallel()
+
+	r, svc := newTestRouter(t)
+	svc.getFn = func(_ context.Context, _ string) (*triage.Result, bool, error) {
+		return nil, false, errors.New("database connection lost")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/triage/some-id", http.NoBody)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(rec.Body.String(), "internal error") {
+		t.Errorf("body = %q, want it to contain 'internal error'", rec.Body.String())
+	}
+}
+
+func TestHandleIngestAlert_PartialSubmitError(t *testing.T) {
+	t.Parallel()
+
+	r, svc := newTestRouter(t)
+	callIdx := 0
+	svc.submitFn = func(_ context.Context, _ *alert.Alert) (*triage.SubmitResult, error) {
+		callIdx++
+		if callIdx == 1 {
+			return nil, errors.New("db write failed")
+		}
+		return &triage.SubmitResult{ID: "ok-id"}, nil
+	}
+
+	body := `{
+		"alerts": [
+			{"status": "firing", "fingerprint": "fp-1", "labels": {"alertname": "A"}, "annotations": {}},
+			{"status": "firing", "fingerprint": "fp-2", "labels": {"alertname": "B"}, "annotations": {}}
+		]
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/alerts", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	accepted, ok := resp["accepted"].([]any)
+	if !ok || len(accepted) != 1 {
+		t.Fatalf("expected 1 accepted ID (first failed, second succeeded), got %v", resp["accepted"])
+	}
+	if accepted[0].(string) != "ok-id" {
+		t.Errorf("accepted ID = %q, want %q", accepted[0], "ok-id")
 	}
 }
 

@@ -436,6 +436,76 @@ func TestBuildInitialPrompt(t *testing.T) {
 	}
 }
 
+func TestRun_MultipleToolCallsPerResponse(t *testing.T) {
+	t.Parallel()
+
+	registry := tools.NewRegistry()
+	registry.Register(&mockTool{
+		name:   "tool_a",
+		output: json.RawMessage(`{"a":"1"}`),
+	})
+	registry.Register(&mockTool{
+		name:   "tool_b",
+		output: json.RawMessage(`{"b":"2"}`),
+	})
+
+	provider := &mockProvider{
+		responses: []*LLMResponse{
+			{
+				Content: []ContentBlock{
+					{Type: "tool_use", ID: "call-a", Name: "tool_a", Input: json.RawMessage(`{"q":"x"}`)},
+					{Type: "tool_use", ID: "call-b", Name: "tool_b", Input: json.RawMessage(`{"q":"y"}`)},
+				},
+				StopReason: StopToolUse,
+				Usage:      Usage{InputTokens: 100, OutputTokens: 50},
+			},
+			{
+				Content:    []ContentBlock{{Type: "text", Text: "both tools returned data"}},
+				StopReason: StopEnd,
+				Usage:      Usage{InputTokens: 200, OutputTokens: 80},
+			},
+		},
+	}
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
+
+	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
+
+	if rr.Status != StatusComplete {
+		t.Errorf("status = %q, want %q", rr.Status, StatusComplete)
+	}
+	if rr.Analysis != "both tools returned data" {
+		t.Errorf("analysis = %q, want %q", rr.Analysis, "both tools returned data")
+	}
+	if rr.ToolCalls != 2 {
+		t.Errorf("tool_calls = %d, want 2", rr.ToolCalls)
+	}
+	if len(rr.ToolsUsed) != 2 {
+		t.Errorf("ToolsUsed = %v, want 2 entries", rr.ToolsUsed)
+	}
+	// ToolsUsed is sorted
+	if rr.ToolsUsed[0] != "tool_a" || rr.ToolsUsed[1] != "tool_b" {
+		t.Errorf("ToolsUsed = %v, want [tool_a, tool_b]", rr.ToolsUsed)
+	}
+	// Should have 3 turns: assistant (2 tool_use), user (2 tool_result), assistant (final text)
+	if len(rr.Conversation.Turns) != 3 {
+		t.Fatalf("conversation turns = %d, want 3", len(rr.Conversation.Turns))
+	}
+	// The user turn should have 2 tool_result content blocks
+	toolResultTurn := rr.Conversation.Turns[1]
+	if toolResultTurn.Role != "user" {
+		t.Errorf("turn[1].Role = %q, want user", toolResultTurn.Role)
+	}
+	resultCount := 0
+	for _, block := range toolResultTurn.Content {
+		if block.Type == "tool_result" {
+			resultCount++
+		}
+	}
+	if resultCount != 2 {
+		t.Errorf("tool_result blocks in user turn = %d, want 2", resultCount)
+	}
+}
+
 func TestRun_ObserverCalledPerTurn(t *testing.T) {
 	t.Parallel()
 
