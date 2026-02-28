@@ -170,6 +170,8 @@ func (s *Service) runTriage(ctx context.Context, id string, al *alert.Alert, tri
 	)
 	if rr.Status == StatusFailed {
 		triageSpan.SetStatus(codes.Error, rr.Analysis)
+	} else {
+		triageSpan.SetStatus(codes.Ok, "")
 	}
 
 	if err := s.notifier.Send(ctx, result); err != nil {

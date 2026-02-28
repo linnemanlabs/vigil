@@ -72,6 +72,7 @@ func (s *Store) Get(ctx context.Context, id string) (*triage.Result, bool, error
 		return nil, false, err
 	}
 
+	span.SetStatus(codes.Ok, "")
 	return r, true, nil
 }
 
@@ -102,6 +103,7 @@ func (s *Store) GetByFingerprint(ctx context.Context, fingerprint string) (*tria
 		return nil, false, err
 	}
 
+	span.SetStatus(codes.Ok, "")
 	return r, true, nil
 }
 
@@ -132,6 +134,7 @@ func (s *Store) Put(ctx context.Context, r *triage.Result) error {
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("commit: %w", err)
 	}
+	span.SetStatus(codes.Ok, "")
 	return nil
 }
 
@@ -163,6 +166,7 @@ func (s *Store) AppendTurn(ctx context.Context, triageID string, seq int, turn *
 		span.SetStatus(codes.Error, err.Error())
 		return 0, fmt.Errorf("commit: %w", err)
 	}
+	span.SetStatus(codes.Ok, "")
 	return msgID, nil
 }
 
@@ -194,6 +198,7 @@ func (s *Store) AppendToolCalls(ctx context.Context, triageID string, messageID,
 		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("commit: %w", err)
 	}
+	span.SetStatus(codes.Ok, "")
 	return nil
 }
 
