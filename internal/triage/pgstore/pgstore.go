@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"time"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -20,23 +19,22 @@ import (
 	"github.com/linnemanlabs/vigil/internal/triage"
 )
 
-var tracer = otel.Tracer("github.com/linnemanlabs/vigil/internal/triage/pgstore")
-
 //go:embed schema.sql
 var schema string
 
 // Store persists triage results in PostgreSQL.
 type Store struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	tracer trace.Tracer
 }
 
 // New applies the schema on the given pool and returns a ready Store.
-func New(ctx context.Context, pool *pgxpool.Pool) (*Store, error) {
+func New(ctx context.Context, pool *pgxpool.Pool, tp trace.TracerProvider) (*Store, error) {
 	if _, err := pool.Exec(ctx, schema); err != nil {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 
-	return &Store{pool: pool}, nil
+	return &Store{pool: pool, tracer: tp.Tracer("github.com/linnemanlabs/vigil/internal/triage/pgstore")}, nil
 }
 
 // Close shuts down the connection pool.
@@ -51,7 +49,7 @@ const triageColumns = `id, fingerprint, status, alert_name, severity, summary, a
 //
 //nolint:dupl // similar structure to GetByFingerprint is intentional
 func (s *Store) Get(ctx context.Context, id string) (*triage.Result, bool, error) {
-	ctx, span := tracer.Start(ctx, "pgstore.Get", trace.WithAttributes(
+	ctx, span := s.tracer.Start(ctx, "pgstore.Get", trace.WithAttributes(
 		attribute.String("db.system", "postgresql"),
 		attribute.String("db.operation.name", "SELECT"),
 	))
@@ -81,7 +79,7 @@ func (s *Store) Get(ctx context.Context, id string) (*triage.Result, bool, error
 //
 //nolint:dupl // similar structure to Get is intentional
 func (s *Store) GetByFingerprint(ctx context.Context, fingerprint string) (*triage.Result, bool, error) {
-	ctx, span := tracer.Start(ctx, "pgstore.GetByFingerprint", trace.WithAttributes(
+	ctx, span := s.tracer.Start(ctx, "pgstore.GetByFingerprint", trace.WithAttributes(
 		attribute.String("db.system", "postgresql"),
 		attribute.String("db.operation.name", "SELECT"),
 	))
@@ -109,7 +107,7 @@ func (s *Store) GetByFingerprint(ctx context.Context, fingerprint string) (*tria
 
 // Put inserts or updates a triage result (upsert on triage_runs only).
 func (s *Store) Put(ctx context.Context, r *triage.Result) error {
-	ctx, span := tracer.Start(ctx, "pgstore.Put", trace.WithAttributes(
+	ctx, span := s.tracer.Start(ctx, "pgstore.Put", trace.WithAttributes(
 		attribute.String("db.system", "postgresql"),
 		attribute.String("db.operation.name", "UPSERT"),
 	))
@@ -139,7 +137,7 @@ func (s *Store) Put(ctx context.Context, r *triage.Result) error {
 
 // AppendTurn inserts a single message row and returns its database ID.
 func (s *Store) AppendTurn(ctx context.Context, triageID string, seq int, turn *triage.Turn) (int, error) {
-	ctx, span := tracer.Start(ctx, "pgstore.AppendTurn", trace.WithAttributes(
+	ctx, span := s.tracer.Start(ctx, "pgstore.AppendTurn", trace.WithAttributes(
 		attribute.String("db.system", "postgresql"),
 		attribute.String("db.operation.name", "INSERT"),
 	))
@@ -171,7 +169,7 @@ func (s *Store) AppendTurn(ctx context.Context, triageID string, seq int, turn *
 // AppendToolCalls inserts tool_call rows for an assistant turn, matched
 // against the tool results from the following user turn.
 func (s *Store) AppendToolCalls(ctx context.Context, triageID string, messageID, messageSeq int, turn *triage.Turn, toolResults map[string]*triage.ContentBlock) error {
-	ctx, span := tracer.Start(ctx, "pgstore.AppendToolCalls", trace.WithAttributes(
+	ctx, span := s.tracer.Start(ctx, "pgstore.AppendToolCalls", trace.WithAttributes(
 		attribute.String("db.system", "postgresql"),
 		attribute.String("db.operation.name", "INSERT"),
 	))

@@ -27,10 +27,11 @@ type Service struct {
 	logger   log.Logger
 	metrics  *Metrics
 	notifier Notifier
+	tracer   trace.Tracer
 }
 
 // NewService creates a new triage service. Metrics and notifier may be nil.
-func NewService(store Store, engine *Engine, logger log.Logger, metrics *Metrics, notifier Notifier) *Service {
+func NewService(store Store, engine *Engine, logger log.Logger, metrics *Metrics, notifier Notifier, tp trace.TracerProvider) *Service {
 	if notifier == nil {
 		notifier = nopNotifier{}
 	}
@@ -40,6 +41,7 @@ func NewService(store Store, engine *Engine, logger log.Logger, metrics *Metrics
 		logger:   logger,
 		metrics:  metrics,
 		notifier: notifier,
+		tracer:   tp.Tracer("github.com/linnemanlabs/vigil/internal/triage"),
 	}
 }
 
@@ -85,7 +87,7 @@ func (s *Service) Submit(ctx context.Context, al *alert.Alert) (*SubmitResult, e
 	// Start a new root span for the triage, linked back to the HTTP request span.
 	// The span is ended in runTriage via defer; spancheck can't see across goroutines.
 	httpSpanCtx := trace.SpanFromContext(ctx).SpanContext()
-	triageCtx, triageSpan := tracer.Start(
+	triageCtx, triageSpan := s.tracer.Start(
 		context.WithoutCancel(ctx),
 		"triage",
 		trace.WithNewRoot(),

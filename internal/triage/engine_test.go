@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/linnemanlabs/go-core/log"
 	"github.com/linnemanlabs/vigil/internal/alert"
@@ -88,7 +88,7 @@ func TestRun_SingleTurn(t *testing.T) {
 			Model:      claudeTestModel,
 		}},
 	}
-	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
 
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
@@ -165,7 +165,7 @@ func TestRun_ToolUseLoop(t *testing.T) {
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
 
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
@@ -220,7 +220,7 @@ func TestRun_UnknownTool(t *testing.T) {
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
 
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
@@ -260,7 +260,7 @@ func TestRun_ToolExecutionError(t *testing.T) {
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
 
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
@@ -282,7 +282,7 @@ func TestRun_LLMError(t *testing.T) {
 	provider := &mockProvider{
 		errs: []error{errors.New("api key expired")},
 	}
-	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
 
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
@@ -316,7 +316,7 @@ func TestRun_MaxToolRoundsLimit(t *testing.T) {
 	}
 
 	provider := &mockProvider{responses: responses}
-	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
 
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
@@ -359,7 +359,7 @@ func TestRun_MaxInputTokensLimit(t *testing.T) { //nolint:dupl // intentionally 
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
 
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
@@ -399,7 +399,7 @@ func TestRun_MaxOutputTokensLimit(t *testing.T) { //nolint:dupl // intentionally
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
 
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
@@ -461,7 +461,7 @@ func TestRun_ObserverCalledPerTurn(t *testing.T) {
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
 
 	type observed struct {
 		seq  int
@@ -524,7 +524,7 @@ func TestRun_ObserverErrorDoesNotAbort(t *testing.T) {
 			},
 		},
 	}
-	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
 
 	cb := func(_ context.Context, _ int, _ *Turn) error {
 		return errors.New("callback boom")
@@ -601,7 +601,7 @@ func TestRun_HooksCalled(t *testing.T) {
 		},
 	}
 
-	engine := NewEngine(provider, registry, log.Nop(), hooks)
+	engine := NewEngine(provider, registry, log.Nop(), hooks, noop.NewTracerProvider())
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
 	if rr.Status != StatusComplete {
@@ -638,15 +638,11 @@ func TestRun_HooksCalled(t *testing.T) {
 }
 
 func TestRun_CreatesSpans(t *testing.T) { //nolint:gocognit // its a complex test and not worth the time to break down
-	// Not parallel: swaps the global OTel tracer provider.
+	t.Parallel()
 
 	exporter := tracetest.NewInMemoryExporter()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter))
 	defer func() { _ = tp.Shutdown(context.Background()) }()
-
-	prev := otel.GetTracerProvider()
-	otel.SetTracerProvider(tp)
-	defer otel.SetTracerProvider(prev)
 
 	registry := tools.NewRegistry()
 	registry.Register(&mockTool{
@@ -673,7 +669,7 @@ func TestRun_CreatesSpans(t *testing.T) { //nolint:gocognit // its a complex tes
 		},
 	}
 
-	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{})
+	engine := NewEngine(provider, registry, log.Nop(), EngineHooks{}, tp)
 	rr := engine.Run(context.Background(), "test-triage-id", testAlert(), nil)
 
 	if rr.Status != StatusComplete {

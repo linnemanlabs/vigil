@@ -7,7 +7,6 @@ import (
 	"slices"
 	"time"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -16,8 +15,6 @@ import (
 	"github.com/linnemanlabs/vigil/internal/alert"
 	"github.com/linnemanlabs/vigil/internal/tools"
 )
-
-var tracer = otel.Tracer("github.com/linnemanlabs/vigil/internal/triage")
 
 const (
 	// MaxToolRounds is the maximum number of tool calls allowed in a single triage before we abort to prevent infinite loops.
@@ -98,15 +95,17 @@ type Engine struct {
 	registry *tools.Registry
 	logger   log.Logger
 	hooks    EngineHooks
+	tracer   trace.Tracer
 }
 
 // NewEngine creates a new triage engine with the given dependencies.
-func NewEngine(provider Provider, registry *tools.Registry, logger log.Logger, hooks EngineHooks) *Engine {
+func NewEngine(provider Provider, registry *tools.Registry, logger log.Logger, hooks EngineHooks, tp trace.TracerProvider) *Engine {
 	return &Engine{
 		provider: provider,
 		registry: registry,
 		logger:   logger,
 		hooks:    hooks,
+		tracer:   tp.Tracer("github.com/linnemanlabs/vigil/internal/triage"),
 	}
 }
 
@@ -188,7 +187,7 @@ func (e *Engine) Run(ctx context.Context, triageID string, al *alert.Alert, onTu
 			Messages:  messages,
 			Tools:     toolDefs,
 		}
-		llmCtx, llmSpan := tracer.Start(ctx, "llm.call", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
+		llmCtx, llmSpan := e.tracer.Start(ctx, "llm.call", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
 			attribute.String("gen_ai.operation.name", "llm.call"),
 			attribute.String("gen_ai.provider.name", "anthropic"),
 			attribute.Int("gen_ai.request.max_tokens", ResponseTokens),
@@ -352,7 +351,7 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 
 		tool, ok := e.registry.Get(block.Name)
 		if !ok {
-			_, toolSpan := tracer.Start(ctx, "tool.execute", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
+			_, toolSpan := e.tracer.Start(ctx, "tool.execute", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
 				attribute.String("gen_ai.operation.name", "tool.execute"),
 				attribute.String("gen_ai.tool.name", block.Name),
 				attribute.String("gen_ai.tool.call.id", block.ID),
@@ -380,7 +379,7 @@ func (e *Engine) executeToolCalls(ctx context.Context, logger log.Logger, conten
 			continue
 		}
 
-		toolCtx, toolSpan := tracer.Start(ctx, "tool.execute", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
+		toolCtx, toolSpan := e.tracer.Start(ctx, "tool.execute", trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(
 			attribute.String("gen_ai.operation.name", "tool.execute"),
 			attribute.String("gen_ai.tool.name", block.Name),
 			attribute.String("gen_ai.tool.call.id", block.ID),

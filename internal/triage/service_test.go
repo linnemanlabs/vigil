@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/trace/noop"
+
 	"github.com/linnemanlabs/go-core/log"
 	"github.com/linnemanlabs/vigil/internal/alert"
 )
@@ -120,7 +122,7 @@ func (m *mockNotifier) Send(_ context.Context, r *Result) error {
 func TestSubmit_SkipsResolvedAlerts(t *testing.T) {
 	t.Parallel()
 
-	svc := NewService(newMockStore(), NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}), log.Nop(), nil, nil)
+	svc := NewService(newMockStore(), NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider()), log.Nop(), nil, nil, noop.NewTracerProvider())
 
 	sr, err := svc.Submit(context.Background(), &alert.Alert{Status: "resolved"})
 	if err != nil {
@@ -141,7 +143,7 @@ func TestSubmit_DedupPending(t *testing.T) {
 	store.seen["fp-1"] = &Result{ID: "existing", Fingerprint: "fp-1", Status: StatusPending}
 	store.results["existing"] = store.seen["fp-1"]
 
-	svc := NewService(store, NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}), log.Nop(), nil, nil)
+	svc := NewService(store, NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider()), log.Nop(), nil, nil, noop.NewTracerProvider())
 
 	sr, err := svc.Submit(context.Background(), &alert.Alert{
 		Status:      "firing",
@@ -166,7 +168,7 @@ func TestSubmit_DedupInProgress(t *testing.T) {
 	store.seen["fp-2"] = &Result{ID: "existing", Fingerprint: "fp-2", Status: StatusInProgress}
 	store.results["existing"] = store.seen["fp-2"]
 
-	svc := NewService(store, NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}), log.Nop(), nil, nil)
+	svc := NewService(store, NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider()), log.Nop(), nil, nil, noop.NewTracerProvider())
 
 	sr, err := svc.Submit(context.Background(), &alert.Alert{
 		Status:      "firing",
@@ -195,8 +197,8 @@ func TestSubmit_AllowsRetriageCompleted(t *testing.T) {
 			Usage:      Usage{InputTokens: 10, OutputTokens: 5},
 		}},
 	}
-	engine := NewEngine(provider, nil, log.Nop(), EngineHooks{})
-	svc := NewService(store, engine, log.Nop(), nil, nil)
+	engine := NewEngine(provider, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
+	svc := NewService(store, engine, log.Nop(), nil, nil, noop.NewTracerProvider())
 
 	sr, err := svc.Submit(context.Background(), &alert.Alert{
 		Status:      "firing",
@@ -221,7 +223,7 @@ func TestSubmit_StoreError(t *testing.T) {
 	store := newMockStore()
 	store.getErr = errors.New("db down")
 
-	svc := NewService(store, NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}), log.Nop(), nil, nil)
+	svc := NewService(store, NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider()), log.Nop(), nil, nil, noop.NewTracerProvider())
 
 	_, err := svc.Submit(context.Background(), &alert.Alert{
 		Status:      "firing",
@@ -240,7 +242,7 @@ func TestGet_Passthrough(t *testing.T) {
 	want := &Result{ID: "t-1", Fingerprint: "fp-1", Status: StatusComplete}
 	store.results["t-1"] = want
 
-	svc := NewService(store, NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}), log.Nop(), nil, nil)
+	svc := NewService(store, NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider()), log.Nop(), nil, nil, noop.NewTracerProvider())
 
 	got, ok, err := svc.Get(context.Background(), "t-1")
 	if err != nil {
@@ -258,7 +260,7 @@ func TestGet_NotFound(t *testing.T) {
 	t.Parallel()
 
 	store := newMockStore()
-	svc := NewService(store, NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}), log.Nop(), nil, nil)
+	svc := NewService(store, NewEngine(&mockProvider{}, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider()), log.Nop(), nil, nil, noop.NewTracerProvider())
 
 	_, ok, err := svc.Get(context.Background(), "nonexistent")
 	if err != nil {
@@ -280,8 +282,8 @@ func TestSubmit_AsyncTriageCompletes(t *testing.T) {
 			Usage:      Usage{InputTokens: 100, OutputTokens: 50},
 		}},
 	}
-	engine := NewEngine(provider, nil, log.Nop(), EngineHooks{})
-	svc := NewService(store, engine, log.Nop(), nil, nil)
+	engine := NewEngine(provider, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
+	svc := NewService(store, engine, log.Nop(), nil, nil, noop.NewTracerProvider())
 
 	sr, err := svc.Submit(context.Background(), &alert.Alert{
 		Status:      "firing",
@@ -321,8 +323,8 @@ func TestSubmit_NotifiesOnCompletion(t *testing.T) {
 			Usage:      Usage{InputTokens: 100, OutputTokens: 50},
 		}},
 	}
-	engine := NewEngine(provider, nil, log.Nop(), EngineHooks{})
-	svc := NewService(store, engine, log.Nop(), nil, notifier)
+	engine := NewEngine(provider, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
+	svc := NewService(store, engine, log.Nop(), nil, notifier, noop.NewTracerProvider())
 
 	sr, err := svc.Submit(context.Background(), &alert.Alert{
 		Status:      "firing",
@@ -372,8 +374,8 @@ func TestSubmit_NotifierErrorDoesNotFail(t *testing.T) {
 			Usage:      Usage{InputTokens: 100, OutputTokens: 50},
 		}},
 	}
-	engine := NewEngine(provider, nil, log.Nop(), EngineHooks{})
-	svc := NewService(store, engine, log.Nop(), nil, notifier)
+	engine := NewEngine(provider, nil, log.Nop(), EngineHooks{}, noop.NewTracerProvider())
+	svc := NewService(store, engine, log.Nop(), nil, notifier, noop.NewTracerProvider())
 
 	sr, err := svc.Submit(context.Background(), &alert.Alert{
 		Status:      "firing",

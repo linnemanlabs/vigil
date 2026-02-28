@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/trace/noop"
+
 	"github.com/linnemanlabs/vigil/internal/postgres"
 	"github.com/linnemanlabs/vigil/internal/triage"
 	"github.com/linnemanlabs/vigil/internal/triage/pgstore"
@@ -23,7 +25,7 @@ func openStore(t *testing.T) *pgstore.Store {
 	if err != nil {
 		t.Fatalf("postgres.NewPool: %v", err)
 	}
-	s, err := pgstore.New(ctx, pool)
+	s, err := pgstore.New(ctx, pool, noop.NewTracerProvider())
 	if err != nil {
 		pool.Close()
 		t.Fatalf("pgstore.New: %v", err)

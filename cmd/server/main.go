@@ -242,7 +242,7 @@ func run() error { //nolint:gocognit // cognit of 37 is reasonable for now can s
 			return fmt.Errorf("postgres pool: %w", err)
 		}
 		defer pool.Close()
-		pgStore, err := pgstore.New(ctx, pool)
+		pgStore, err := pgstore.New(ctx, pool, otel.GetTracerProvider())
 		if err != nil {
 			return fmt.Errorf("pgstore init: %w", err)
 		}
@@ -278,7 +278,7 @@ func run() error { //nolint:gocognit // cognit of 37 is reasonable for now can s
 	))
 
 	// Initialize the triage engine (pure - no store dependency).
-	claudeEngine := triage.NewEngine(claudeProvider, registry, L, triageMetrics.Hooks())
+	claudeEngine := triage.NewEngine(claudeProvider, registry, L, triageMetrics.Hooks(), otel.GetTracerProvider())
 	if claudeEngine == nil {
 		return fmt.Errorf("failed to initialize triage engine for Claude provider")
 	}
@@ -293,7 +293,7 @@ func run() error { //nolint:gocognit // cognit of 37 is reasonable for now can s
 	}
 
 	// Initialize the triage service (owns dedup, lifecycle, async dispatch).
-	triageSvc := triage.NewService(triageStore, claudeEngine, L, triageMetrics, notifier)
+	triageSvc := triage.NewService(triageStore, claudeEngine, L, triageMetrics, notifier, otel.GetTracerProvider())
 
 	// setup toggle for server shutdown. this is used to fail readiness checks
 	// during shutdown to drain connections from load balancer before killing the process.
