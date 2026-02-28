@@ -85,10 +85,12 @@ func (s *Service) Submit(ctx context.Context, al *alert.Alert) (*SubmitResult, e
 	}
 
 	// Start a new root span for the triage, linked back to the HTTP request span.
-	// The span is ended in runTriage via defer; spancheck can't see across goroutines.
+	// We use a fresh context (not WithoutCancel) so that the pyroscope tracer
+	// wrapper treats this as a genuine root span and adds pyroscope.profile.id.
+	// The logger is the only value we carry forward.
 	httpSpanCtx := trace.SpanFromContext(ctx).SpanContext()
 	triageCtx, triageSpan := s.tracer.Start(
-		context.WithoutCancel(ctx),
+		log.WithContext(context.Background(), log.FromContext(ctx)),
 		"triage",
 		trace.WithNewRoot(),
 		trace.WithLinks(trace.Link{SpanContext: httpSpanCtx}),
