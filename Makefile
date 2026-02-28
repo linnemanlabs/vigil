@@ -1,10 +1,10 @@
 .PHONY: build run test fuzz cover clean release lint bench vet check tidy
 
 build:
-	go build -o vigil ./cmd/vigil
+	go build -o vigil-server ./cmd/server
 
 run: build
-	./vigil
+	./vigil-server
 
 test:
 	go test -race -count=1 ./...
@@ -27,7 +27,7 @@ cover:
 	@rm coverage.out
 
 clean:
-	rm -rf vigil coverage.out
+	rm -rf vigil-server coverage.out
 
 tidy:
 	go mod tidy
